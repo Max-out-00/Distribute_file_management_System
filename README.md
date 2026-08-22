@@ -11,3 +11,4 @@ A distributed file system project organized by service ownership.
 - `shared/` - Shared protocol definitions and common constants
 - `docs/` - Design documentation, API contracts, and diagrams
 - `tests/` - Integration and end-to-end tests
+# Distribute_file_management_System
