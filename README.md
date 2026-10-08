@@ -4,11 +4,19 @@ A distributed file system project organized by service ownership.
 
 ## Project Structure
 
-- `metadata-server/` - Metadata, namespace, and file-location management (Person A)
-- `data-node/` - File chunk storage and retrieval (Person B)
-- `failure-detector/` - Node health monitoring and failure detection (Person C)
-- `client-dashboard/` - Client-facing dashboard and controls (Person D)
-- `shared/` - Shared protocol definitions and common constants
-- `docs/` - Design documentation, API contracts, and diagrams
-- `tests/` - Integration and end-to-end tests
+```text
+distributed-fs/
+├── docs/                 # Protocol, schema, architecture, and report
+├── shared/               # Constants and message framing
+├── metadata_server/      # Metadata TCP server, database, and placement
+├── data_node/            # Chunk storage, node server, and heartbeats
+├── client/               # Chunking, upload, download, and CLI
+├── failure_detector/     # Monitoring and re-replication
+├── dashboard/            # Optional web dashboard
+├── tests/                # Unit, manual, and integration tests
+└── scripts/              # Development and demo launchers
+```
+
+Run the metadata server from the project root with
+`python -m metadata_server.server`.
 # Distribute_file_management_System
