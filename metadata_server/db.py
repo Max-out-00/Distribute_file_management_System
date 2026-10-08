@@ -1,6 +1,6 @@
 import sqlite3
 
-conn = sqlite3.connect('_metadata.db_')
+conn = sqlite3.connect('metadata.db')
 
 c = conn.cursor()
 
