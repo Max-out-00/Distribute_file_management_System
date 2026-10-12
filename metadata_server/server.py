@@ -6,7 +6,7 @@ class Server:
         self.server = socket.socket()
         self.server.bind(( constants.HOST, constants.METADATA_PORT))
         self.server.listen(5)
-        print(f"Listening on port {port}")
+        print(f"Listening on port {constants.METADATA_PORT}")
         self.storage = {} 
 
     def start(self):
@@ -45,5 +45,5 @@ class Server:
         return 'Unknown command'
 
 # Start the server on port 9999 (METADATA_PORT)
-server = CloudHashServer(constants.METADATA_PORT)
+server = Server()
 server.start()
