@@ -1,32 +1,37 @@
+"""JSON-header and binary-payload framing shared by clients and data nodes."""
+import json
 import socket
+import struct
 
-def send_msg(sock, msg, payload=b""):
-    msg_bytes = msg.encode('utf-8')
-    msg_length = len(msg_bytes)
-    payload_length = len(payload)
-    total_length = msg_length + payload_length
 
-    # Send the length of the message and payload
-    sock.sendall(total_length.to_bytes(4, byteorder='big'))
-    # Send the message
-    sock.sendall(msg_bytes)
-    # Send the payload if it exists
-    if payload_length > 0:
-        sock.sendall(payload)
+MAX_HEADER = 1024 * 1024
+
+
+def _recv_exact(sock, size):
+    data = bytearray()
+    while len(data) < size:
+        part = sock.recv(size - len(data))
+        if not part:
+            raise ConnectionError("socket closed while receiving a message")
+        data.extend(part)
+    return bytes(data)
+
+
+def send_msg(sock, header, payload=b""):
+    header = dict(header)
+    if payload:
+        header["size"] = len(payload)
+    encoded_header = json.dumps(header).encode("utf-8")
+    sock.sendall(struct.pack(">I", len(encoded_header)) + encoded_header + payload)
+
 
 def recv_msg(sock):
-    # Receive the length of the incoming message and payload
-    length_bytes = sock.recv(4)
-    if not length_bytes:
-        raise ConnectionError("Socket closed while waiting for message length.")
-    total_length = int.from_bytes(length_bytes, byteorder='big')
+    (header_size,) = struct.unpack(">I", _recv_exact(sock, 4))
+    if header_size > MAX_HEADER:
+        raise ValueError("header too large")
 
-    # Receive the message
-    msg_bytes = sock.recv(total_length)
-    if not msg_bytes:
-        raise ConnectionError("Socket closed while waiting for message.")
-    
-    # Decode the message
-    msg = msg_bytes.decode('utf-8')
-    
-    return msg
+    header = json.loads(_recv_exact(sock, header_size).decode("utf-8"))
+    payload_size = header.get("size", 0)
+    if not isinstance(payload_size, int) or payload_size < 0:
+        raise ValueError("invalid payload size")
+    return header, _recv_exact(sock, payload_size) if payload_size else b""
