@@ -1,4 +1,4 @@
-# Distributed File System
+# Distribute_file_management_System
 
 A distributed file system project organized by service ownership.
 
@@ -58,8 +58,6 @@ This is a local demonstration of splitting, TCP upload/download, per-chunk
 integrity checks, reassembly, and storage across three node directories. It
 does not demonstrate metadata-based placement, automatic replication, or
 failure recovery.
-
-# Distribute_file_management_System
 
 
 To show the evidence while presenting:
