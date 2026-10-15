@@ -60,3 +60,10 @@ does not demonstrate metadata-based placement, automatic replication, or
 failure recovery.
 
 # Distribute_file_management_System
+
+
+To show the evidence while presenting:
+
+Get-ChildItem .\data_node\storage\node*\demo_*.chunk
+Get-FileHash .\sample.bin
+Get-FileHash .\sample_out.bin
