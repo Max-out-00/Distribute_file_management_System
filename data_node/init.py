@@ -3,6 +3,7 @@
 Run from the project root, e.g.:
     python -m data_node.init --node-id node1 --port 5001 --storage-dir data_node/chunks/node1
     python -m data_node.init --node-id node2 --port 5002 --storage-dir data_node/chunks/node2
+    python -m data_node.init --node-id node3 --port 5003 --storage-dir data_node/chunks/node3
 """
 import argparse
 import logging
