@@ -65,3 +65,33 @@ To show the evidence while presenting:
 Get-ChildItem .\data_node\storage\node*\demo_*.chunk
 Get-FileHash .\sample.bin
 Get-FileHash .\sample_out.bin
+
+## Running with Docker
+
+Start the metadata server and three data nodes:
+
+```sh
+docker compose up --build -d
+```
+
+Upload and download through the optional client profile:
+
+```sh
+docker compose run --rm client python -m client.cli upload sample.bin
+docker compose run --rm client python -m client.cli download YOUR_FILE_ID downloaded.bin
+```
+
+Run the end-to-end failure-recovery demo (PowerShell users can run
+`.\scripts\run_demo.ps1`):
+
+```sh
+./scripts/run_demo.sh
+```
+
+The demo waits for all nodes, uploads `sample.bin`, shows replica placement,
+stops `node2`, waits for recovery, downloads the file, and compares SHA-256
+hashes. To stop the stack:
+
+```sh
+docker compose down
+```

@@ -4,50 +4,21 @@ Wire format (both directions):
     [4-byte big-endian header length][JSON header][optional payload of header["size"] bytes]
 
 Commands handled:
-    PUT_CHUNK        {chunk_id, size, checksum?} + payload  -> {status}
+    PUT_CHUNK        {chunk_id, checksum, size} + payload   -> {status, checksum}
     GET_CHUNK        {chunk_id}                             -> {status, size, checksum} + payload
     DELETE_CHUNK     {chunk_id}                             -> {status}
     HAS_CHUNK        {chunk_id}                             -> {status, exists}
-    REPLICATE_CHUNK  {chunk_id, target_host, target_port}   -> {status}
+    REPLICATE_CHUNK  {chunk_id, checksum, target_host, target_port} -> {status}
                      (sent by metadata server / failure detector to a surviving replica holder)
     PING                                                    -> {status}
 """
-import json
 import logging
 import socket
-import struct
 import threading
 
+from shared.message import recv_msg, send_msg
+
 log = logging.getLogger("data_node.server")
-MAX_HEADER = 1024 * 1024
-
-
-# ---------- framing helpers (shared with heartbeat.py) ----------
-def recv_exact(sock, n):
-    buf = bytearray()
-    while len(buf) < n:
-        part = sock.recv(n - len(buf))
-        if not part:
-            raise ConnectionError("connection closed")
-        buf.extend(part)
-    return bytes(buf)
-
-
-def send_msg(sock, header, payload=b""):
-    header = dict(header)
-    if payload:
-        header["size"] = len(payload)
-    raw = json.dumps(header).encode()
-    sock.sendall(struct.pack(">I", len(raw)) + raw + payload)
-
-
-def recv_msg(sock):
-    (hlen,) = struct.unpack(">I", recv_exact(sock, 4))
-    if hlen > MAX_HEADER:
-        raise ValueError("header too large")
-    header = json.loads(recv_exact(sock, hlen).decode())
-    payload = recv_exact(sock, header["size"]) if header.get("size") else b""
-    return header, payload
 
 
 def request(host, port, header, payload=b"", timeout=10):
@@ -70,6 +41,8 @@ class DataNodeServer:
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind((self.host, self.port))
         self._sock.listen(64)
+        self._sock.settimeout(0.2)
+        self.port = self._sock.getsockname()[1]
         self._running = True
         log.info("data node listening on %s:%d", self.host, self.port)
         threading.Thread(target=self._accept_loop, daemon=True).start()
@@ -83,6 +56,8 @@ class DataNodeServer:
         while self._running:
             try:
                 conn, addr = self._sock.accept()
+            except socket.timeout:
+                continue
             except OSError:
                 break
             threading.Thread(target=self._handle, args=(conn, addr), daemon=True).start()
@@ -95,17 +70,23 @@ class DataNodeServer:
                     header, payload = recv_msg(conn)
                 except ConnectionError:
                     break
+                except (OSError, ValueError, TypeError) as e:
+                    log.warning("invalid request from %s: %s", addr, e)
+                    send_msg(conn, {"status": "error", "error": str(e)})
+                    break
                 try:
                     self._dispatch(conn, header, payload)
                 except Exception as e:  # report error but keep serving
                     log.exception("error handling %s from %s", header.get("cmd"), addr)
-                    send_msg(conn, {"status": "error", "message": str(e)})
+                    send_msg(conn, {"status": "error", "error": str(e), "message": str(e)})
         except (OSError, ValueError) as e:
             log.warning("connection %s dropped: %s", addr, e)
         finally:
             conn.close()
 
     def _dispatch(self, conn, h, payload):
+        if not isinstance(h, dict):
+            raise ValueError("message header must be a JSON object")
         cmd, cid = h.get("cmd"), h.get("chunk_id")
 
         if cmd == "PING":
@@ -113,8 +94,13 @@ class DataNodeServer:
 
         elif cmd == "PUT_CHUNK":
             expected = h.get("checksum")
-            if expected and self.storage.checksum(payload) != expected:
-                send_msg(conn, {"status": "error", "message": "checksum mismatch"})
+            if not isinstance(expected, str):
+                raise ValueError("checksum is required")
+            if type(h.get("size")) is not int or h["size"] != len(payload):
+                raise ValueError("payload size is missing or does not match")
+            if self.storage.checksum(payload) != expected:
+                send_msg(conn, {"status": "error", "error": "checksum mismatch",
+                                "message": "checksum mismatch"})
                 return
             digest = self.storage.write_chunk(cid, payload)
             log.info("stored chunk %s (%d bytes)", cid, len(payload))
@@ -124,7 +110,8 @@ class DataNodeServer:
             try:
                 data = self.storage.read_chunk(cid)
             except FileNotFoundError:
-                send_msg(conn, {"status": "error", "message": "chunk not found"})
+                send_msg(conn, {"status": "error", "error": "chunk not found",
+                                "message": "chunk not found"})
                 return
             send_msg(conn, {"status": "ok", "checksum": self.storage.checksum(data)}, data)
 
@@ -135,13 +122,24 @@ class DataNodeServer:
             send_msg(conn, {"status": "ok", "exists": self.storage.has_chunk(cid)})
 
         elif cmd == "REPLICATE_CHUNK":
+            expected = h.get("checksum")
+            target_host = h.get("target_host")
+            target_port = h.get("target_port")
+            if not isinstance(expected, str) or not isinstance(target_host, str):
+                raise ValueError("checksum and target_host are required")
+            if type(target_port) is not int or not 0 < target_port < 65536:
+                raise ValueError("target_port must be a valid port")
             data = self.storage.read_chunk(cid)
-            resp, _ = request(h["target_host"], int(h["target_port"]),
+            if self.storage.checksum(data) != expected:
+                raise ValueError("source chunk checksum mismatch")
+            resp, _ = request(target_host, target_port,
                               {"cmd": "PUT_CHUNK", "chunk_id": cid,
-                               "checksum": self.storage.checksum(data)}, data)
-            log.info("replicated %s -> %s:%s (%s)", cid, h["target_host"], h["target_port"], resp.get("status"))
+                               "checksum": expected}, data)
+            log.info("replicated %s -> %s:%s (%s)", cid, target_host, target_port, resp.get("status"))
             send_msg(conn, {"status": resp.get("status", "error"),
+                            "error": resp.get("error", resp.get("message", "")),
                             "message": resp.get("message", "")})
 
         else:
-            send_msg(conn, {"status": "error", "message": f"unknown command {cmd!r}"})
+            send_msg(conn, {"status": "error", "error": f"unknown command {cmd!r}",
+                            "message": f"unknown command {cmd!r}"})

@@ -1,8 +1,11 @@
 """Local chunk storage for a data node: just stores and retrieves blobs of bytes."""
 import hashlib
 import os
+import re
 import shutil
 import threading
+
+CHUNK_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 class ChunkStorage:
@@ -12,8 +15,7 @@ class ChunkStorage:
         self._lock = threading.Lock()
 
     def _path(self, chunk_id):
-        # Block path traversal such as "../../etc/passwd"
-        if not chunk_id or os.path.basename(chunk_id) != chunk_id:
+        if not isinstance(chunk_id, str) or not CHUNK_ID.fullmatch(chunk_id):
             raise ValueError(f"invalid chunk id: {chunk_id!r}")
         return os.path.join(self.root, chunk_id + ".chunk")
 

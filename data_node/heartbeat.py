@@ -1,7 +1,6 @@
 """Registers with the metadata server and sends periodic heartbeats."""
 import logging
 import threading
-import time
 
 from .node_server import request
 
@@ -15,17 +14,16 @@ class HeartbeatSender:
         self.meta_host, self.meta_port = meta_host, meta_port
         self.interval = interval
         self._stop = threading.Event()
+        self._thread = None
 
     def _payload(self, cmd):
         return {
-            "cmd": cmd,
+            "type": "REGISTER_NODE" if cmd == "REGISTER" else "HEARTBEAT",
             "node_id": self.node_id,
             "host": self.host,
             "port": self.port,
-            "free_space": self.storage.free_space(),
-            "chunk_count": self.storage.chunk_count(),
+            "free_bytes": self.storage.free_space(),
             "chunk_ids": self.storage.list_chunks() if cmd == "REGISTER" else None,
-            "timestamp": time.time(),
         }
 
     def _send(self, cmd):
@@ -33,10 +31,13 @@ class HeartbeatSender:
         return resp.get("status") == "ok"
 
     def start(self):
-        threading.Thread(target=self._run, daemon=True).start()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
 
     def stop(self):
         self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=max(1, self.interval + 1))
 
     def _run(self):
         # Register (retry until metadata server is up)

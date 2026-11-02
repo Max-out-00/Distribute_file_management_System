@@ -1,49 +1,106 @@
+import argparse
+import logging
+import os
 import socket
-from shared import constants
+import threading
 
-class Server:
-    def __init__(self):
-        self.server = socket.socket()
-        self.server.bind(( constants.HOST, constants.METADATA_PORT))
-        self.server.listen(5)
-        print(f"Listening on port {constants.METADATA_PORT}")
-        self.storage = {} 
+from shared import constants
+from shared.message import recv_msg, send_msg
+from . import db, handlers
+
+log = logging.getLogger("metadata_server.server")
+
+
+class MetadataServer:
+    def __init__(self, host=constants.BIND_HOST, port=constants.METADATA_PORT,
+                 db_path=None, enable_monitor=True,
+                 failure_timeout=None, monitor_interval=2):
+        self.host, self.port = host, port
+        self.db_path = db_path or os.environ.get(
+            "METADATA_DB", "metadata_server/metadata.db"
+        )
+        self.enable_monitor = enable_monitor
+        self.failure_timeout, self.monitor_interval = failure_timeout, monitor_interval
+        self._stop = threading.Event()
+        self._sock = None
+        self._thread = None
+        self._monitor = None
 
     def start(self):
-        while True:
-            connection, client_address = self.server.accept()
+        db.initialize(self.db_path)
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind((self.host, self.port))
+        listener.listen(64)
+        listener.settimeout(0.2)
+        self._sock = listener
+        self.port = listener.getsockname()[1]
+        self._thread = threading.Thread(target=self._accept_loop, daemon=True)
+        self._thread.start()
+        if self.enable_monitor:
+            from failure_detector.monitor import FailureMonitor
+            self._monitor = FailureMonitor(
+                self.db_path, failure_timeout=self.failure_timeout,
+                interval=self.monitor_interval,
+            )
+            self._monitor.start()
+        log.info("metadata server listening on %s:%d", self.host, self.port)
+        return self
+
+    def stop(self):
+        self._stop.set()
+        if self._monitor:
+            self._monitor.stop()
+        if self._sock:
+            self._sock.close()
+        if self._thread:
+            self._thread.join(timeout=2)
+        if self._monitor:
+            self._monitor.join(timeout=2)
+
+    def _accept_loop(self):
+        while not self._stop.is_set():
             try:
-                self.handle(connection)
-            finally:
-                connection.close()
-        
-    def handle(self , request):
-        # Read from the connection until EOF
-        request = connection.recv(1024).decode()  # Read request from the client
+                conn, address = self._sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            threading.Thread(
+                target=self._handle, args=(conn, address), daemon=True
+            ).start()
 
-        # Write back the result of the hash operation
-        response = self.process(request)
-        connection.sendall(response.encode())  # Send response back to the client
-        
+    def _handle(self, conn, address):
+        conn.settimeout(10)
+        try:
+            message, _ = recv_msg(conn)
+            response = handlers.handle_message(message, self.db_path)
+        except Exception as error:
+            log.warning("request from %s failed: %s", address, error)
+            response = {"status": "error", "error": str(error)}
+        try:
+            send_msg(conn, response)
+        except OSError as error:
+            log.debug("could not reply to %s: %s", address, error)
+        finally:
+            conn.close()
 
-    def process(self, request):
-        # Split the request into command, key, and value
-        parts = request.split()
-        command = parts[0].upper()
 
-        # Handle GET and SET commands
-        if command == 'GET':
-            key = parts[1]
-            return self.storage.get(key, 'Key not found')
+def main():
+    parser = argparse.ArgumentParser(description="Metadata server")
+    parser.add_argument("--bind-host", default=constants.BIND_HOST)
+    parser.add_argument("--port", type=int, default=constants.METADATA_PORT)
+    parser.add_argument("--db", default=os.environ.get(
+        "METADATA_DB", "metadata_server/metadata.db"
+    ))
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO)
+    server = MetadataServer(args.bind_host, args.port, args.db).start()
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        server.stop()
 
-        elif command == 'SET':
-            key = parts[1]
-            value = parts[2]
-            self.storage[key] = value
-            return 'OK'
 
-        return 'Unknown command'
-
-# Start the server on port 9999 (METADATA_PORT)
-server = Server()
-server.start()
+if __name__ == "__main__":
+    main()

@@ -1,49 +1,114 @@
-# Comments are provided throughout this file to help you get started.
-# If you need more help, visit the Docker Compose reference guide at
-# https://docs.docker.com/go/compose-spec-reference/
+x-app: &app
+  image: distributed-fs:local
+  build: .
 
-# Here the instructions define your application as a service called "server".
-# This service is built from the Dockerfile in the current directory.
-# You can add other services your application may depend on here, such as a
-# database or a cache. For examples, see the Awesome Compose repository:
-# https://github.com/docker/awesome-compose
 services:
-  server:
-    build:
-      context: .
+  metadata:
+    <<: *app
+    command: ["python", "-m", "metadata_server.server", "--bind-host", "0.0.0.0", "--port", "5000", "--db", "/data/metadata.db"]
+    environment:
+      BIND_HOST: 0.0.0.0
+      METADATA_HOST: metadata
+      METADATA_PORT: "5000"
+      METADATA_DB: /data/metadata.db
     ports:
-      - 8000:8000
+      - "5000:5000"
+    volumes:
+      - metadata-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.healthcheck", "metadata", "--port", "5000"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
-# The commented out section below is an example of how to define a PostgreSQL
-# database that your application can use. `depends_on` tells Docker Compose to
-# start the database before your application. The `db-data` volume persists the
-# database data between container restarts. The `db-password` secret is used
-# to set the database password. You must create `db/password.txt` and add
-# a password of your choosing to it before running `docker compose up`.
-#     depends_on:
-#       db:
-#         condition: service_healthy
-#   db:
-#     image: postgres
-#     restart: always
-#     user: postgres
-#     secrets:
-#       - db-password
-#     volumes:
-#       - db-data:/var/lib/postgresql/data
-#     environment:
-#       - POSTGRES_DB=example
-#       - POSTGRES_PASSWORD_FILE=/run/secrets/db-password
-#     expose:
-#       - 5432
-#     healthcheck:
-#       test: [ "CMD", "pg_isready" ]
-#       interval: 10s
-#       timeout: 5s
-#       retries: 5
-# volumes:
-#   db-data:
-# secrets:
-#   db-password:
-#     file: db/password.txt
+  node1:
+    <<: *app
+    command: ["python", "-m", "data_node.init", "--node-id", "node1", "--bind-host", "0.0.0.0", "--advertise-host", "node1", "--port", "5001", "--meta-host", "metadata", "--meta-port", "5000", "--storage-dir", "/data"]
+    environment:
+      BIND_HOST: 0.0.0.0
+      METADATA_HOST: metadata
+      METADATA_PORT: "5000"
+    volumes:
+      - node1-data:/data
+    depends_on:
+      metadata:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.healthcheck", "node", "--port", "5001"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
+  node2:
+    <<: *app
+    command: ["python", "-m", "data_node.init", "--node-id", "node2", "--bind-host", "0.0.0.0", "--advertise-host", "node2", "--port", "5002", "--meta-host", "metadata", "--meta-port", "5000", "--storage-dir", "/data"]
+    environment:
+      BIND_HOST: 0.0.0.0
+      METADATA_HOST: metadata
+      METADATA_PORT: "5000"
+    volumes:
+      - node2-data:/data
+    depends_on:
+      metadata:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.healthcheck", "node", "--port", "5002"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  node3:
+    <<: *app
+    command: ["python", "-m", "data_node.init", "--node-id", "node3", "--bind-host", "0.0.0.0", "--advertise-host", "node3", "--port", "5003", "--meta-host", "metadata", "--meta-port", "5000", "--storage-dir", "/data"]
+    environment:
+      BIND_HOST: 0.0.0.0
+      METADATA_HOST: metadata
+      METADATA_PORT: "5000"
+    volumes:
+      - node3-data:/data
+    depends_on:
+      metadata:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.healthcheck", "node", "--port", "5003"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  client:
+    <<: *app
+    profiles: ["client"]
+    working_dir: /work
+    volumes:
+      - .:/work
+    environment:
+      PYTHONPATH: /work
+      METADATA_HOST: metadata
+      METADATA_PORT: "5000"
+    command: ["python", "-c", "import time; time.sleep(3600)"]
+    depends_on:
+      metadata:
+        condition: service_healthy
+      node1:
+        condition: service_healthy
+      node2:
+        condition: service_healthy
+      node3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.healthcheck", "metadata", "--host", "metadata", "--port", "5000"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  metadata-data:
+  node1-data:
+  node2-data:
+  node3-data:

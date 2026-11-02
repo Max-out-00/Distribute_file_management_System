@@ -31,7 +31,9 @@ def recv_msg(sock):
         raise ValueError("header too large")
 
     header = json.loads(_recv_exact(sock, header_size).decode("utf-8"))
+    if not isinstance(header, dict):
+        raise ValueError("message header must be a JSON object")
     payload_size = header.get("size", 0)
-    if not isinstance(payload_size, int) or payload_size < 0:
+    if type(payload_size) is not int or payload_size < 0:
         raise ValueError("invalid payload size")
     return header, _recv_exact(sock, payload_size) if payload_size else b""

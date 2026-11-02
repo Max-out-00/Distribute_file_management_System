@@ -1,6 +1,8 @@
 import socket
+import struct
 import threading
 
+import pytest
 from shared.message import recv_msg, send_msg
 
 
@@ -27,3 +29,15 @@ def test_json_header_and_binary_payload_round_trip():
 
     assert actual_header == {**expected_header, "size": len(expected_payload)}
     assert actual_payload == expected_payload
+
+
+@pytest.mark.parametrize("header", (b"[]", b'{"size":true}'))
+def test_invalid_header_is_rejected(header):
+    sender, receiver = socket.socketpair()
+    sender.sendall(struct.pack(">I", len(header)) + header)
+    try:
+        with pytest.raises(ValueError):
+            recv_msg(receiver)
+    finally:
+        sender.close()
+        receiver.close()
