@@ -56,3 +56,32 @@ Every message type must be documented in `docs/protocol.md` with its fields, an 
 - Do not rename folders.
 - Do not reformat unrelated code.
 - Do not delete tests to make them pass.
+
+## File seperation
+- File show their uploaded date and time.
+- New files that are uploaded or are being uploaded.
+
+## Upload and Download Progress bar
+- Displaying a progression bar that shows the process in percentage.
+- The bar should be visible, in green color.
+- Display the download progress.
+
+## Node Verification
+Any node containing data should be matched with the original Upload in order to check the integrity of the nodes that contain the data of the set file. If any data should be corrupted and lost, data recovery must commence.
+
+## Automatic Node recovery and Automatic Notification
+When a node containing the data goes offline or is corrupted it should give it notification and work to fix the lost/corrupted data. When this corruption or data loss is found the user must be notified of it.
+
+## Node Overloading Fix
+While data storing in the nodes, if any given node does not contain the adiquit storage for the chunk to be saved. The program must scan all the nodes and fist find the highest capacity node and store the data in those nodes. 
+
+## Node overloading Solution
+-When any file is uploaded. And divided into chunks, they will be stored in a set of 5 nodes, with the chunks of the said file stored inside them equally. 
+- If the nodes with a set cannot hold the chunk files due to their size, a new set of nodes will be create while preserving the old chunk data, in the old set. And the chunks will be stored in a different set of 5 nodes.
+
+## Multi File Upload/Download
+- The user must be able to upload the multiple files at once. 
+- At the time of upload and download the program must scan the files and upload or download the files based on their storage size. The smallest size files should be uploaded or downloaded first.
+
+## Data log
+- Upon uploading a file, the data will get it's unique ID for that perticular file and it's uploaded date will be recoarded.
