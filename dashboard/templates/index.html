@@ -3,405 +3,257 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard | Distributed File Manager</title>
+    <title>Distributed FS Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <style>
-        /* Node + stored file cards: match the dark theme */
-        .node-status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 18px;
-        }
-
-        .stored-files-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-            gap: 18px;
-        }
-
-        .node-card,
-        .stored-file-card {
-            background: #131e32;
-            border: 1px solid #293750;
-            border-radius: 15px;
-            padding: 24px;
-            min-width: 0;
-            color: #f8fafc;
-        }
-
-        .node-card h3,
-        .stored-file-card h3 {
-            font-size: 18px;
-            margin-bottom: 10px;
-            overflow-wrap: anywhere;
-        }
-
-        .node-card .feature-icon,
-        .stored-file-card .feature-icon {
-            background: #1e3355;
-            color: #93c5fd;
-        }
-
-        .muted-text {
-            color: #94a3b8;
-            font-size: 13px;
-            line-height: 1.7;
-            margin-bottom: 8px;
-            overflow-wrap: anywhere;
-        }
-
-        .node-status-grid + .muted-text {
-            margin-top: 16px;
-        }
-
-        /* Online / Offline pills */
-        .status-pill {
-            display: inline-block;
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-            margin-top: 6px;
-        }
-
-        .status-online {
-            background: #14532d55;
-            color: #86efac;
-            border: 1px solid #166534;
-        }
-
-        .status-offline {
-            background: #7f1d1d55;
-            color: #fca5a5;
-            border: 1px solid #991b1b;
-        }
-
-        /* Chunk details */
-        .stored-file-card details {
-            margin-top: 12px;
-        }
-
-        .stored-file-card summary {
-            color: #93c5fd;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-        .chunk-list {
-            padding-left: 20px;
-            margin-top: 12px;
-            font-size: 13px;
-            color: #cbd5e1;
-            overflow-wrap: anywhere;
-        }
-
-        .chunk-list li {
-            margin-bottom: 10px;
-        }
-
-        /* Refresh button */
-        .refresh-link {
-            cursor: pointer;
-            background: #1e3355;
-            color: #93c5fd;
-            border: 1px solid #293750;
-            border-radius: 9px;
-            padding: 10px 16px;
-            font: inherit;
-            font-size: 14px;
-            font-weight: 600;
-            transition: 0.2s;
-        }
-
-        .refresh-link:hover {
-            background: #26426b;
-        }
-
-        /* Empty state */
-        .empty-state {
-            padding: 22px;
-            border: 1px dashed #475569;
-            border-radius: 12px;
-            background: #0b1324;
-            color: #64748b;
-            font-size: 13px;
-        }
-
-        /* Flash messages */
-        .upload-message {
-            padding: 12px 16px;
-            border-radius: 9px;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-
-        .upload-message.error {
-            background: #7f1d1d55;
-            color: #fca5a5;
-        }
-
-        .upload-message.success {
-            background: #14532d55;
-            color: #86efac;
-        }
-    </style>
 </head>
 <body class="dashboard-page">
-
-<div class="dashboard-layout">
-
-    <!-- Sidebar -->
-    <aside class="sidebar">
-        <div class="sidebar-brand">
-            <div class="sidebar-logo">☁</div>
-            <div>
-                <h2>Distributed FS</h2>
-                <span>File Management</span>
-            </div>
-        </div>
-
-        <nav class="sidebar-nav">
-            <a href="{{ url_for('home') }}" class="nav-link active">
-                <span>▦</span> Dashboard
-            </a>
-            <a href="#file-management" class="nav-link">
-                <span>▤</span> File Management
-            </a>
-            <a href="#node-monitoring" class="nav-link">
-                <span>◉</span> Node Monitoring
-            </a>
-            <a href="#stored-files" class="nav-link">
-                <span>▥</span> Stored Files & Chunks
-            </a>
-            <a href="#future-features" class="nav-link">
-                <span>⚙</span> Future Features
-            </a>
-        </nav>
-    </aside>
-
-    <!-- Main Content -->
-    <main class="dashboard-main">
-
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% for category, message in messages %}
-                <div class="upload-message {{ category }}" role="status">
-                    {{ message }}
-                </div>
-            {% endfor %}
-        {% endwith %}
-
-        <header class="dashboard-header">
-            <div>
-                <h1>Dashboard Overview</h1>
-                <p>Manage your files and distributed storage system.</p>
-            </div>
-            <div class="user-profile">
-                <div class="avatar">☁</div>
-                <span>Distributed Storage</span>
-            </div>
-        </header>
-
-        <!-- Welcome Banner -->
-        <section class="welcome-banner">
-            <div>
-                <p class="eyebrow">DISTRIBUTED FILE MANAGER</p>
-                <h2>Welcome to your Dashboard!</h2>
-                <p>Your workspace for distributed file storage.</p>
-            </div>
-            <div class="welcome-icon">☁</div>
-        </section>
-
-        <!-- File Management -->
-        <section id="file-management" class="dashboard-section">
-            <div class="section-heading">
+    <div class="dashboard-layout">
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="sidebar-logo">☁</div>
                 <div>
-                    <h2>File Management</h2>
-                    <p>Upload files to distributed storage.</p>
+                    <h2>Distributed FS</h2>
+                    <span>File Management</span>
                 </div>
             </div>
+            <nav class="sidebar-nav">
+                <a href="{{ url_for('home') }}" class="nav-link active">Dashboard</a>
+            </nav>
+        </aside>
 
-            <div class="feature-grid">
-                <div class="feature-card">
-                    <div class="feature-icon upload-icon">↑</div>
-                    <h3>Upload File</h3>
-                    <p>
-                        Select a file to split into chunks and distribute
-                        across available data nodes.
-                    </p>
+        <main class="dashboard-main">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% for category, message in messages %}
+                    <div class="upload-message {{ category }}" role="status">{{ message }}</div>
+                {% endfor %}
+            {% endwith %}
 
-                    <form action="{{ url_for('upload') }}"
-                          method="POST"
-                          enctype="multipart/form-data">
-                        <div class="file-upload-area">
-                            <input type="file"
-                                   id="fileInput"
-                                   name="file"
-                                   required>
-                            <label for="fileInput">Choose a file</label>
-                            <span id="selectedFile">No file selected</span>
-                        </div>
+            {% if recovery_notice %}
+                <div class="recovery-banner" role="alert">{{ recovery_notice }}</div>
+            {% endif %}
 
-                        <button class="feature-btn" type="submit">
-                            Upload File
-                        </button>
-                    </form>
+            <header class="dashboard-header">
+                <div>
+                    <h1>Dashboard Overview</h1>
+                    <p>Upload files, check node health, and download files through the browser.</p>
                 </div>
+            </header>
 
-                <div class="feature-card">
-                    <div class="feature-icon download-icon">↓</div>
-                    <h3>Download File</h3>
-                    <p>
-                        Reconstruct the original file from its stored chunks.
-                    </p>
-                    <div class="download-placeholder">
-                        <span>Download functionality is not connected yet.</span>
+            <section class="dashboard-section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Upload File</h2>
                     </div>
-                    <button class="feature-btn secondary-btn"
-                            type="button" disabled>
-                        Download Coming Soon
-                    </button>
                 </div>
-            </div>
-        </section>
+                <form id="uploadForm" action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data">
+                    <div class="file-upload-area">
+                        <input type="file" id="fileInput" name="file" required>
+                        <label for="fileInput">Choose a file</label>
+                        <span id="selectedFile">No file selected</span>
+                    </div>
+                    <div id="uploadProgressWrap" class="progress-wrap hidden">
+                        <div class="progress-meta">
+                            <span>Uploading</span>
+                            <strong id="uploadPercent">0%</strong>
+                        </div>
+                        <div class="progress-bar"><span id="uploadProgressFill"></span></div>
+                    </div>
+                    <button id="uploadButton" class="feature-btn" type="submit">Upload File</button>
+                </form>
+            </section>
 
-        <!-- Live Node Monitoring -->
-        <section id="node-monitoring" class="dashboard-section">
-            <div class="section-heading">
-                <div>
-                    <h2>Node Monitoring</h2>
-                    <p>Current node status as checked by the dashboard.</p>
+            <section class="dashboard-section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Node Monitoring</h2>
+                    </div>
+                    <button class="refresh-link" type="button" onclick="window.location.reload()">Refresh</button>
                 </div>
-                <button class="refresh-link" type="button"
-                        onclick="window.location.reload()">
-                    ↻ Refresh
-                </button>
-            </div>
+                <div class="node-status-grid">
+                    {% for node in nodes %}
+                    <div class="node-card">
+                        <div class="feature-icon">◉</div>
+                        <h3>{{ node.id }}</h3>
+                        <p class="muted-text">{{ node.host }}:{{ node.port }}</p>
+                        <span class="status-pill {{ 'status-online' if node.online else 'status-offline' }}">{{ node.status }}</span>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">No metadata server nodes were reported.</div>
+                    {% endfor %}
+                </div>
+            </section>
 
-            <div class="node-status-grid">
-                {% for node in nodes %}
-                <div class="node-card">
-                    <div class="feature-icon">◉</div>
-                    <h3>{{ node.id }}</h3>
-                    <p class="muted-text">
-                        {{ node.host }}:{{ node.port }}
-                    </p>
-                    <span class="status-pill {{ 'status-online' if node.online else 'status-offline' }}">
-                        {{ node.status }}
-                    </span>
+            <section class="dashboard-section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Stored Files</h2>
+                    </div>
+                </div>
+                {% if files %}
+                <div class="stored-files-grid">
+                    {% for file in files %}
+                    <article class="stored-file-card">
+                        <div class="feature-icon">▤</div>
+                        <h3>{{ file.filename }}</h3>
+                        <p class="muted-text">Size: {{ file.size }} bytes</p>
+                        <p class="muted-text">Chunks: {{ file.chunk_count }}</p>
+                        <p class="muted-text">Uploaded: {{ file.created_at }}</p>
+                        <a class="feature-btn secondary-btn download-action" href="{{ url_for('download', file_id=file.file_id) }}" data-file-id="{{ file.file_id }}">Download</a>
+                        {% if file.chunks %}
+                        <details>
+                            <summary>View chunk locations</summary>
+                            <ul class="chunk-list">
+                                {% for chunk in file.chunks %}
+                                <li><strong>Chunk {{ chunk.chunk_index }}</strong><br>{{ chunk.nodes[0].node_id if chunk.nodes else 'No replica' }}</li>
+                                {% endfor %}
+                            </ul>
+                        </details>
+                        {% endif %}
+                    </article>
+                    {% endfor %}
                 </div>
                 {% else %}
-                <div class="empty-state">
-                    No node information was returned by the dashboard.
+                <div class="empty-state">No uploaded files yet.</div>
+                {% endif %}
+            </section>
+
+            <section class="dashboard-section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Data Log</h2>
+                    </div>
                 </div>
-                {% endfor %}
-            </div>
-
-            <p class="muted-text">
-                Status is based on the dashboard's node health check;
-                it is not a guarantee that every storage operation will succeed.
-            </p>
-        </section>
-
-        <!-- Stored Files and Chunk Locations -->
-        <section id="stored-files" class="dashboard-section">
-            <div class="section-heading">
-                <div>
-                    <h2>Stored Files & Chunk Locations</h2>
-                    <p>Metadata recorded for successful dashboard uploads.</p>
-                </div>
-            </div>
-
-            {% if files %}
-            <div class="stored-files-grid">
-                {% for file in files %}
-                <article class="stored-file-card">
-                    <div class="feature-icon">▤</div>
-                    <h3>{{ file.filename }}</h3>
-
-                    <p class="muted-text">
-                        Size: {{ file.size }} bytes
-                    </p>
-                    <p class="muted-text">
-                        Chunks recorded: {{ file.chunk_count }}
-                    </p>
-                    <p class="muted-text">
-                        Uploaded: {{ file.created_at or 'Unknown' }}
-                    </p>
-
-                    <details>
-                        <summary>View chunk locations</summary>
-
-                        {% if file.chunks %}
-                        <ul class="chunk-list">
-                            {% for chunk in file.chunks %}
-                            <li>
-                                <strong>Chunk {{ chunk.index }}</strong><br>
-                                Node: {{ chunk.node_id }}<br>
-                                Address: {{ chunk.host }}:{{ chunk.port }}<br>
-                                Size: {{ chunk.size }} bytes
-                            </li>
+                {% if files %}
+                <div class="log-table-wrap">
+                    <table class="log-table">
+                        <thead>
+                            <tr>
+                                <th>File ID</th>
+                                <th>Filename</th>
+                                <th>Uploaded</th>
+                                <th>Chunks</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for file in files %}
+                            <tr>
+                                <td>{{ file.file_id }}</td>
+                                <td>{{ file.filename }}</td>
+                                <td>{{ file.created_at }}</td>
+                                <td>{{ file.chunk_count }}</td>
+                            </tr>
                             {% endfor %}
-                        </ul>
-                        {% else %}
-                        <p class="muted-text">
-                            No chunk-location metadata is recorded for this file.
-                        </p>
-                        {% endif %}
-                    </details>
-                </article>
-                {% endfor %}
-            </div>
-            {% else %}
-            <div class="empty-state">
-                No files have been recorded yet. Upload a file to see its metadata here.
-            </div>
-            {% endif %}
-        </section>
-
-        <!-- Future Features -->
-        <section id="future-features" class="dashboard-section">
-            <div class="future-grid">
-                <div class="future-card">
-                    <div class="future-icon">▤</div>
-                    <h3>Chunk Distribution</h3>
-                    <p>Visualize how file chunks are distributed.</p>
-                    <span class="coming-soon-badge">Metadata View Available Above</span>
+                        </tbody>
+                    </table>
                 </div>
+                {% else %}
+                <div class="empty-state">No data log entries yet.</div>
+                {% endif %}
+            </section>
+        </main>
+    </div>
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const selectedFile = document.getElementById('selectedFile');
+        const uploadForm = document.getElementById('uploadForm');
+        const uploadProgressWrap = document.getElementById('uploadProgressWrap');
+        const uploadProgressFill = document.getElementById('uploadProgressFill');
+        const uploadPercent = document.getElementById('uploadPercent');
+        const uploadButton = document.getElementById('uploadButton');
 
-                <div class="future-card">
-                    <div class="future-icon">⟳</div>
-                    <h3>Failure Recovery</h3>
-                    <p>Replication and automatic recovery are not connected yet.</p>
-                    <span class="coming-soon-badge">Planned</span>
-                </div>
+        fileInput.addEventListener('change', function () {
+            selectedFile.textContent = this.files.length ? this.files[0].name : 'No file selected';
+        });
 
-                <div class="future-card">
-                    <div class="future-icon">▥</div>
-                    <h3>Storage Analytics</h3>
-                    <p>Monitor storage capacity and file activity.</p>
-                    <span class="coming-soon-badge">Planned</span>
-                </div>
-            </div>
-        </section>
+        uploadForm.addEventListener('submit', function (event) {
+            if (!fileInput.files || !fileInput.files.length) {
+                return;
+            }
+            event.preventDefault();
+            const formData = new FormData(uploadForm);
+            const xhr = new XMLHttpRequest();
+            const file = fileInput.files[0];
 
-        <footer class="dashboard-footer">
-            Distributed File Manager · PBL Project
-        </footer>
+            uploadProgressWrap.classList.remove('hidden');
+            uploadButton.disabled = true;
+            uploadPercent.textContent = '0%';
+            uploadProgressFill.style.width = '0%';
 
-    </main>
-</div>
+            xhr.open('POST', uploadForm.action, true);
+            xhr.upload.addEventListener('progress', function (progressEvent) {
+                if (!progressEvent.lengthComputable) {
+                    return;
+                }
+                const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100);
+                uploadPercent.textContent = `${percent}%`;
+                uploadProgressFill.style.width = `${percent}%`;
+            });
+            xhr.addEventListener('load', function () {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    window.location.reload();
+                } else {
+                    uploadButton.disabled = false;
+                    uploadProgressWrap.classList.add('hidden');
+                    alert('Upload failed. Please try again.');
+                }
+            });
+            xhr.addEventListener('error', function () {
+                uploadButton.disabled = false;
+                uploadProgressWrap.classList.add('hidden');
+                alert('Upload failed. Please try again.');
+            });
+            xhr.send(formData);
+        });
 
-<script>
-    const fileInput = document.getElementById("fileInput");
-    const selectedFile = document.getElementById("selectedFile");
+        document.querySelectorAll('.download-action').forEach(function (link) {
+            link.addEventListener('click', async function (event) {
+                event.preventDefault();
+                const fileId = link.dataset.fileId;
+                const progressWrap = document.createElement('div');
+                progressWrap.className = 'progress-wrap download-progress';
+                progressWrap.innerHTML = '<div class="progress-meta"><span>Downloading</span><strong id="downloadPercent">0%</strong></div><div class="progress-bar"><span id="downloadProgressFill"></span></div>';
+                link.parentNode.insertBefore(progressWrap, link.nextSibling);
 
-    fileInput.addEventListener("change", function () {
-        selectedFile.textContent = this.files.length
-            ? this.files[0].name
-            : "No file selected";
-    });
-</script>
+                try {
+                    const response = await fetch(`/download/${fileId}`);
+                    if (!response.ok) {
+                        throw new Error('download failed');
+                    }
+                    const total = parseInt(response.headers.get('Content-Length') || '0', 10) || 0;
+                    const reader = response.body.getReader();
+                    const chunks = [];
+                    let received = 0;
 
+                    while (true) {
+                        const result = await reader.read();
+                        if (result.done) {
+                            break;
+                        }
+                        chunks.push(result.value);
+                        received += result.value.length;
+                        const percent = total ? Math.min(100, Math.round((received / total) * 100)) : 0;
+                        const downloadPercent = progressWrap.querySelector('#downloadPercent');
+                        const downloadProgressFill = progressWrap.querySelector('#downloadProgressFill');
+                        downloadPercent.textContent = `${percent}%`;
+                        downloadProgressFill.style.width = `${percent}%`;
+                    }
+
+                    const blob = new Blob(chunks);
+                    const blobUrl = URL.createObjectURL(blob);
+                    const downloadAnchor = document.createElement('a');
+                    downloadAnchor.href = blobUrl;
+                    downloadAnchor.download = link.textContent.trim() === 'Download' ? 'download.bin' : link.textContent.trim();
+                    document.body.appendChild(downloadAnchor);
+                    downloadAnchor.click();
+                    downloadAnchor.remove();
+                    URL.revokeObjectURL(blobUrl);
+                    progressWrap.remove();
+                } catch (error) {
+                    progressWrap.remove();
+                    alert('Download failed. Please try again.');
+                }
+            });
+        });
+    </script>
 </body>
 </html>

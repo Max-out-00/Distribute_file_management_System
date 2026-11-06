@@ -1,3 +1,5 @@
+from shared import constants
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS NODES (
  NODE_ID TEXT PRIMARY KEY NOT NULL, HOST TEXT NOT NULL, PORT INTEGER NOT NULL,
@@ -98,6 +100,33 @@ def get_under_replicated_chunks(conn, k):
     return result
 
 
+def get_replication_issues(conn, required=None):
+    minimum = constants.REPLICATION_FACTOR if required is None else int(required)
+    rows = conn.execute(
+        """SELECT f.FILE_ID, f.FILE_NAME, c.CHUNK_ID, c.CHUNK_INDEX,
+                  COUNT(DISTINCT CASE WHEN n.STATUS='ALIVE' AND l.STATUS='STORED'
+                      THEN n.NODE_ID END) AS ALIVE_COPIES
+           FROM FILES f
+           JOIN CHUNKS c ON c.FILE_ID=f.FILE_ID
+           LEFT JOIN CHUNKS_LOCATION l ON l.CHUNK_ID=c.CHUNK_ID AND l.STATUS='STORED'
+           LEFT JOIN NODES n ON n.NODE_ID=l.NODE_ID
+           GROUP BY f.FILE_ID, f.FILE_NAME, c.CHUNK_ID, c.CHUNK_INDEX
+           HAVING ALIVE_COPIES < ?
+           ORDER BY f.FILE_NAME, c.CHUNK_INDEX""", (minimum,)
+    ).fetchall()
+    return [
+        {
+            "file_id": row["FILE_ID"],
+            "file_name": row["FILE_NAME"],
+            "chunk_id": row["CHUNK_ID"],
+            "chunk_index": row["CHUNK_INDEX"],
+            "alive_copies": row["ALIVE_COPIES"],
+            "required": minimum,
+        }
+        for row in rows
+    ]
+
+
 def pick_target_node(conn, chunk_id):
     row = conn.execute(
         """SELECT n.NODE_ID, n.HOST, n.PORT, n.FREE_BYTES FROM NODES n
@@ -125,6 +154,7 @@ def remove_pending_replica(conn, chunk_id, node_id):
 
 
 def create_upload_plan(conn, file_id, file_name, size, chunks, now, replica_count):
+    replica_count = max(int(replica_count), constants.REPLICATION_FACTOR)
     alive = conn.execute(
         "SELECT COUNT(*) FROM NODES WHERE STATUS='ALIVE'"
     ).fetchone()[0]
