@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
+<<<<<<< HEAD
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f5f7fb">
@@ -256,5 +257,261 @@
     }));
 })();
 </script>
+=======
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Distributed FS Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="dashboard-page">
+    <div class="dashboard-layout">
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="sidebar-logo">☁</div>
+                <div>
+                    <h2>Distributed FS</h2>
+                    <span>File Management</span>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="{{ url_for('home') }}" class="nav-link active">Dashboard</a>
+            </nav>
+        </aside>
+
+        <main class="dashboard-main">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% for category, message in messages %}
+                    <div class="upload-message {{ category }}" role="status">{{ message }}</div>
+                {% endfor %}
+            {% endwith %}
+
+            {% if recovery_notice %}
+                <div class="recovery-banner" role="alert">{{ recovery_notice }}</div>
+            {% endif %}
+
+            <header class="dashboard-header">
+                <div>
+                    <h1>Dashboard Overview</h1>
+                    <p>Upload files, check node health, and download files through the browser.</p>
+                </div>
+            </header>
+
+            <section class="dashboard-section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Upload File</h2>
+                    </div>
+                </div>
+                <form id="uploadForm" action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data">
+                    <div class="file-upload-area">
+                        <input type="file" id="fileInput" name="file" required>
+                        <label for="fileInput">Choose a file</label>
+                        <span id="selectedFile">No file selected</span>
+                    </div>
+                    <div id="uploadProgressWrap" class="progress-wrap hidden">
+                        <div class="progress-meta">
+                            <span>Uploading</span>
+                            <strong id="uploadPercent">0%</strong>
+                        </div>
+                        <div class="progress-bar"><span id="uploadProgressFill"></span></div>
+                    </div>
+                    <button id="uploadButton" class="feature-btn" type="submit">Upload File</button>
+                </form>
+            </section>
+
+            <section class="dashboard-section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Node Monitoring</h2>
+                    </div>
+                    <button class="refresh-link" type="button" onclick="window.location.reload()">Refresh</button>
+                </div>
+                <div class="node-status-grid">
+                    {% for node in nodes %}
+                    <div class="node-card">
+                        <div class="feature-icon">◉</div>
+                        <h3>{{ node.id }}</h3>
+                        <p class="muted-text">{{ node.host }}:{{ node.port }}</p>
+                        <span class="status-pill {{ 'status-online' if node.online else 'status-offline' }}">{{ node.status }}</span>
+                    </div>
+                    {% else %}
+                    <div class="empty-state">No metadata server nodes were reported.</div>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="dashboard-section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Stored Files</h2>
+                    </div>
+                </div>
+                {% if files %}
+                <div class="stored-files-grid">
+                    {% for file in files %}
+                    <article class="stored-file-card">
+                        <div class="feature-icon">▤</div>
+                        <h3>{{ file.filename }}</h3>
+                        <p class="muted-text">Size: {{ file.size }} bytes</p>
+                        <p class="muted-text">Chunks: {{ file.chunk_count }}</p>
+                        <p class="muted-text">Uploaded: {{ file.created_at }}</p>
+                        <a class="feature-btn secondary-btn download-action" href="{{ url_for('download', file_id=file.file_id) }}" data-file-id="{{ file.file_id }}">Download</a>
+                        {% if file.chunks %}
+                        <details>
+                            <summary>View chunk locations</summary>
+                            <ul class="chunk-list">
+                                {% for chunk in file.chunks %}
+                                <li><strong>Chunk {{ chunk.chunk_index }}</strong><br>{{ chunk.nodes[0].node_id if chunk.nodes else 'No replica' }}</li>
+                                {% endfor %}
+                            </ul>
+                        </details>
+                        {% endif %}
+                    </article>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">No uploaded files yet.</div>
+                {% endif %}
+            </section>
+
+            <section class="dashboard-section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Data Log</h2>
+                    </div>
+                </div>
+                {% if files %}
+                <div class="log-table-wrap">
+                    <table class="log-table">
+                        <thead>
+                            <tr>
+                                <th>File ID</th>
+                                <th>Filename</th>
+                                <th>Uploaded</th>
+                                <th>Chunks</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for file in files %}
+                            <tr>
+                                <td>{{ file.file_id }}</td>
+                                <td>{{ file.filename }}</td>
+                                <td>{{ file.created_at }}</td>
+                                <td>{{ file.chunk_count }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="empty-state">No data log entries yet.</div>
+                {% endif %}
+            </section>
+        </main>
+    </div>
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const selectedFile = document.getElementById('selectedFile');
+        const uploadForm = document.getElementById('uploadForm');
+        const uploadProgressWrap = document.getElementById('uploadProgressWrap');
+        const uploadProgressFill = document.getElementById('uploadProgressFill');
+        const uploadPercent = document.getElementById('uploadPercent');
+        const uploadButton = document.getElementById('uploadButton');
+
+        fileInput.addEventListener('change', function () {
+            selectedFile.textContent = this.files.length ? this.files[0].name : 'No file selected';
+        });
+
+        uploadForm.addEventListener('submit', function (event) {
+            if (!fileInput.files || !fileInput.files.length) {
+                return;
+            }
+            event.preventDefault();
+            const formData = new FormData(uploadForm);
+            const xhr = new XMLHttpRequest();
+            const file = fileInput.files[0];
+
+            uploadProgressWrap.classList.remove('hidden');
+            uploadButton.disabled = true;
+            uploadPercent.textContent = '0%';
+            uploadProgressFill.style.width = '0%';
+
+            xhr.open('POST', uploadForm.action, true);
+            xhr.upload.addEventListener('progress', function (progressEvent) {
+                if (!progressEvent.lengthComputable) {
+                    return;
+                }
+                const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100);
+                uploadPercent.textContent = `${percent}%`;
+                uploadProgressFill.style.width = `${percent}%`;
+            });
+            xhr.addEventListener('load', function () {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    window.location.reload();
+                } else {
+                    uploadButton.disabled = false;
+                    uploadProgressWrap.classList.add('hidden');
+                    alert('Upload failed. Please try again.');
+                }
+            });
+            xhr.addEventListener('error', function () {
+                uploadButton.disabled = false;
+                uploadProgressWrap.classList.add('hidden');
+                alert('Upload failed. Please try again.');
+            });
+            xhr.send(formData);
+        });
+
+        document.querySelectorAll('.download-action').forEach(function (link) {
+            link.addEventListener('click', async function (event) {
+                event.preventDefault();
+                const fileId = link.dataset.fileId;
+                const progressWrap = document.createElement('div');
+                progressWrap.className = 'progress-wrap download-progress';
+                progressWrap.innerHTML = '<div class="progress-meta"><span>Downloading</span><strong id="downloadPercent">0%</strong></div><div class="progress-bar"><span id="downloadProgressFill"></span></div>';
+                link.parentNode.insertBefore(progressWrap, link.nextSibling);
+
+                try {
+                    const response = await fetch(`/download/${fileId}`);
+                    if (!response.ok) {
+                        throw new Error('download failed');
+                    }
+                    const total = parseInt(response.headers.get('Content-Length') || '0', 10) || 0;
+                    const reader = response.body.getReader();
+                    const chunks = [];
+                    let received = 0;
+
+                    while (true) {
+                        const result = await reader.read();
+                        if (result.done) {
+                            break;
+                        }
+                        chunks.push(result.value);
+                        received += result.value.length;
+                        const percent = total ? Math.min(100, Math.round((received / total) * 100)) : 0;
+                        const downloadPercent = progressWrap.querySelector('#downloadPercent');
+                        const downloadProgressFill = progressWrap.querySelector('#downloadProgressFill');
+                        downloadPercent.textContent = `${percent}%`;
+                        downloadProgressFill.style.width = `${percent}%`;
+                    }
+
+                    const blob = new Blob(chunks);
+                    const blobUrl = URL.createObjectURL(blob);
+                    const downloadAnchor = document.createElement('a');
+                    downloadAnchor.href = blobUrl;
+                    downloadAnchor.download = link.textContent.trim() === 'Download' ? 'download.bin' : link.textContent.trim();
+                    document.body.appendChild(downloadAnchor);
+                    downloadAnchor.click();
+                    downloadAnchor.remove();
+                    URL.revokeObjectURL(blobUrl);
+                    progressWrap.remove();
+                } catch (error) {
+                    progressWrap.remove();
+                    alert('Download failed. Please try again.');
+                }
+            });
+        });
+    </script>
+>>>>>>> 7705a94da38dbc1d6ca4308c4dc77434284e87ba
 </body>
 </html>

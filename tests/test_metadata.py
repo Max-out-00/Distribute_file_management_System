@@ -1,13 +1,36 @@
 from metadata_server import db, queries
 from client.upload import call
+from dashboard.app import build_recovery_notice
 from metadata_server.server import MetadataServer
+
+
+def test_replication_issues_are_reported_for_incomplete_replica_sets(tmp_path):
+    database = tmp_path / "metadata.db"
+    db.initialize(database)
+    with db.connection(database) as conn:
+        for node_id, free in (("node-a", 100), ("node-b", 200), ("node-c", 300)):
+            queries.register_node(conn, node_id, "127.0.0.1", 1, free, 100)
+        planned, _ = queries.create_upload_plan(
+            conn, "file-1", "sample.bin", 4,
+            [{"chunk_id": "chunk-a", "chunk_index": 0, "chunk_size": 4,
+              "checksum": "a" * 64}],
+            100, 3,
+        )
+        issues = queries.get_replication_issues(conn, 3)
+        assert len(issues) == 1
+        assert issues[0]["file_id"] == "file-1"
+        assert issues[0]["alive_copies"] == 0
+        plans = planned[0]["nodes"]
+        queries.mark_replica(conn, "chunk-a", plans[0]["node_id"], "STORED")
+        issues = queries.get_replication_issues(conn, 3)
+        assert issues[0]["alive_copies"] == 1
 
 
 def test_under_replicated_chunks_and_target_selection(tmp_path):
     database = tmp_path / "metadata.db"
     db.initialize(database)
     with db.connection(database) as conn:
-        for node_id, free in (("node-a", 100), ("node-b", 200), ("node-c", 300)):
+        for node_id, free in (("node-a", 100), ("node-b", 200), ("node-c", 300), ("node-d", 400)):
             queries.register_node(conn, node_id, "127.0.0.1", 1, free, 100)
         planned, alive = queries.create_upload_plan(
             conn, "file-1", "sample.bin", 8,
@@ -19,12 +42,12 @@ def test_under_replicated_chunks_and_target_selection(tmp_path):
             ],
             100, 2,
         )
-        assert alive == 3
-        assert len(planned[0]["nodes"]) == 2
+        assert alive == 4
+        assert len(planned[0]["nodes"]) == 3
         assert queries.confirm_replica(conn, "chunk-a", planned[0]["nodes"][0]["node_id"])
         for node in planned[1]["nodes"]:
             queries.mark_replica(conn, "chunk-b", node["node_id"], "STORED")
-        under_replicated = queries.get_under_replicated_chunks(conn, 2)
+        under_replicated = queries.get_under_replicated_chunks(conn, 3)
         assert [chunk["chunk_id"] for chunk in under_replicated] == ["chunk-a"]
         assert len(under_replicated[0]["sources"]) == 1
         target = queries.pick_target_node(conn, "chunk-a")
@@ -38,7 +61,18 @@ def test_under_replicated_chunks_and_target_selection(tmp_path):
         locations = queries.get_file_locations(conn, "file-1")
         assert locations[0]["chunk_id"] == "chunk-a"
         assert len(locations[0]["nodes"]) == 1
-        assert len(queries.list_nodes(conn)) == 3
+        assert len(queries.list_nodes(conn)) == 4
+
+
+def test_recovery_notice_lists_offline_nodes():
+    notice = build_recovery_notice([
+        {"id": "node1", "online": True},
+        {"id": "node2", "online": False},
+        {"id": "node3", "online": False},
+    ])
+    assert "node2" in notice
+    assert "node3" in notice
+    assert "Recovery notice" in notice
 
 
 def test_invalid_metadata_request_returns_error_and_server_keeps_serving(tmp_path):

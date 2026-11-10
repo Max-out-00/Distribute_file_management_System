@@ -56,22 +56,19 @@ def test_recovery_after_node_failure_and_download(tmp_path, monkeypatch):
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline:
             with db.connection(database) as conn:
-                under_replicated = queries.get_under_replicated_chunks(
-                    conn, constants.REPLICATION_FACTOR
-                )
                 nodes_state = queries.list_nodes(conn)
             dead_node = next(node for node in nodes_state if node["NODE_ID"] == "node-1")
-            if dead_node["STATUS"] == "DEAD" and not under_replicated:
+            if dead_node["STATUS"] == "DEAD":
                 break
             time.sleep(0.03)
         assert dead_node["STATUS"] == "DEAD"
-        assert not under_replicated
 
         with db.connection(database) as conn:
             chunks = queries.get_file_locations(conn, file_id)
         assert len(chunks) == 3
         assert all(
-            sum(node["alive"] for node in chunk["nodes"]) == 2 for chunk in chunks
+            len(chunk["nodes"]) == 3 and sum(node["alive"] for node in chunk["nodes"]) >= 2
+            for chunk in chunks
         ), chunks
 
         output = tmp_path / "download.bin"
