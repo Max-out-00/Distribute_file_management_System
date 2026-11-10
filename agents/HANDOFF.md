@@ -47,3 +47,11 @@
 - Tests added: PING/demo-helper checks and malformed JSON-header/payload-size rejection. Final `python -m pytest -q`: 10 passed. Both Compose configurations validate; PowerShell and Bash demo scripts pass syntax checks.
 - Open problems: `docker compose build` could not run because the Docker Desktop Linux engine is unavailable in this environment. Runtime image/service behavior remains to be verified on a host with Docker running.
 - What the next agent must know: The client profile uses `METADATA_HOST=metadata` and `METADATA_PORT=5000`; node advertised hosts are Compose service names. The recovery demo uses `--no-deps` for the post-failure download so stopped `node2` remains stopped.
+
+## 2026-11-06 — Local cleanup and run guide
+- What changed: Removed generated caches and demo artifacts, kept the source tree focused on the working application, and added a concise local run guide to `README.md`.
+- Files touched: `README.md`, `agents/HANDOFF.md`.
+- New or changed message types: None.
+- Tests added: None.
+- Open problems: None.
+- What the next agent must know: Use the local metadata server + three-node startup sequence from the README before running the CLI or demo script; generated chunk files/database artifacts are recreated automatically when needed.

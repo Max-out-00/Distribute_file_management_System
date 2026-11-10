@@ -17,8 +17,54 @@ distributed-fs/
 └── scripts/              # Development and demo launchers
 ```
 
-Run the metadata server from the project root with
-`python -m metadata_server.server`.
+## Quick start (local run)
+
+From the repository root, start the metadata server in one terminal:
+
+```powershell
+python -m metadata_server.server --port 9999
+```
+
+Then start three data nodes in separate terminals:
+
+```powershell
+python -m data_node.init --node-id node1 --bind-host 127.0.0.1 --advertise-host 127.0.0.1 --port 5001 --storage-dir data_node/storage/node1 --meta-host 127.0.0.1 --meta-port 9999
+python -m data_node.init --node-id node2 --bind-host 127.0.0.1 --advertise-host 127.0.0.1 --port 5002 --storage-dir data_node/storage/node2 --meta-host 127.0.0.1 --meta-port 9999
+python -m data_node.init --node-id node3 --bind-host 127.0.0.1 --advertise-host 127.0.0.1 --port 5003 --storage-dir data_node/storage/node3 --meta-host 127.0.0.1 --meta-port 9999
+```
+
+Start the web dashboard in another terminal:
+
+```powershell
+python -m dashboard.app
+```
+
+Then open the browser at:
+
+```text
+http://127.0.0.1:8000
+```
+
+Use the UI to upload files and download stored files. Each chunk is split, distributed across different nodes, and stored with three replicas when enough nodes are available. The dashboard uses the live metadata server and the data nodes directly, shows a green progress bar for uploads/downloads, surfaces node recovery notices when data nodes drop offline, and keeps a simple data log of each uploaded file and its timestamp.
+
+Command-line alternative:
+
+```powershell
+python -m client.cli upload .\sample.bin
+python -m client.cli download <FILE_ID> .\restored.bin
+```
+
+You can also run the built-in recovery demo script:
+
+```powershell
+./scripts/run_demo.ps1
+```
+
+or, on bash-based systems:
+
+```bash
+./scripts/run_demo.sh
+```
 
 ## Show the upload, chunking, and storage flow
 
