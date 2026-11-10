@@ -1,407 +1,260 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard | Distributed File Manager</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f7fb">
+    <title>Distributed FS | Operations Console</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <style>
-        /* Node + stored file cards: match the dark theme */
-        .node-status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 18px;
-        }
-
-        .stored-files-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-            gap: 18px;
-        }
-
-        .node-card,
-        .stored-file-card {
-            background: #131e32;
-            border: 1px solid #293750;
-            border-radius: 15px;
-            padding: 24px;
-            min-width: 0;
-            color: #f8fafc;
-        }
-
-        .node-card h3,
-        .stored-file-card h3 {
-            font-size: 18px;
-            margin-bottom: 10px;
-            overflow-wrap: anywhere;
-        }
-
-        .node-card .feature-icon,
-        .stored-file-card .feature-icon {
-            background: #1e3355;
-            color: #93c5fd;
-        }
-
-        .muted-text {
-            color: #94a3b8;
-            font-size: 13px;
-            line-height: 1.7;
-            margin-bottom: 8px;
-            overflow-wrap: anywhere;
-        }
-
-        .node-status-grid + .muted-text {
-            margin-top: 16px;
-        }
-
-        /* Online / Offline pills */
-        .status-pill {
-            display: inline-block;
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-            margin-top: 6px;
-        }
-
-        .status-online {
-            background: #14532d55;
-            color: #86efac;
-            border: 1px solid #166534;
-        }
-
-        .status-offline {
-            background: #7f1d1d55;
-            color: #fca5a5;
-            border: 1px solid #991b1b;
-        }
-
-        /* Chunk details */
-        .stored-file-card details {
-            margin-top: 12px;
-        }
-
-        .stored-file-card summary {
-            color: #93c5fd;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-        .chunk-list {
-            padding-left: 20px;
-            margin-top: 12px;
-            font-size: 13px;
-            color: #cbd5e1;
-            overflow-wrap: anywhere;
-        }
-
-        .chunk-list li {
-            margin-bottom: 10px;
-        }
-
-        /* Refresh button */
-        .refresh-link {
-            cursor: pointer;
-            background: #1e3355;
-            color: #93c5fd;
-            border: 1px solid #293750;
-            border-radius: 9px;
-            padding: 10px 16px;
-            font: inherit;
-            font-size: 14px;
-            font-weight: 600;
-            transition: 0.2s;
-        }
-
-        .refresh-link:hover {
-            background: #26426b;
-        }
-
-        /* Empty state */
-        .empty-state {
-            padding: 22px;
-            border: 1px dashed #475569;
-            border-radius: 12px;
-            background: #0b1324;
-            color: #64748b;
-            font-size: 13px;
-        }
-
-        /* Flash messages */
-        .upload-message {
-            padding: 12px 16px;
-            border-radius: 9px;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-
-        .upload-message.error {
-            background: #7f1d1d55;
-            color: #fca5a5;
-        }
-
-        .upload-message.success {
-            background: #14532d55;
-            color: #86efac;
-        }
-    </style>
 </head>
 <body class="dashboard-page">
-
-<div class="dashboard-layout">
-
-    <!-- Sidebar -->
-    <aside class="sidebar">
-        <div class="sidebar-brand">
-            <div class="sidebar-logo">☁</div>
-            <div>
-                <h2>Distributed FS</h2>
-                <span>File Management</span>
-            </div>
-        </div>
-
+<div class="app-shell">
+    <aside class="sidebar" aria-label="Main navigation">
+        <a class="brand" href="{{ url_for('home') }}">
+            <span class="brand-mark" aria-hidden="true">D</span>
+            <span><strong>Distributed FS</strong><small>Storage console</small></span>
+        </a>
+        <div class="nav-caption">WORKSPACE</div>
         <nav class="sidebar-nav">
-            <a href="{{ url_for('home') }}" class="nav-link active">
-                <span>▦</span> Dashboard
-            </a>
-            <a href="#file-management" class="nav-link">
-                <span>▤</span> File Management
-            </a>
-            <a href="#node-monitoring" class="nav-link">
-                <span>◉</span> Node Monitoring
-            </a>
-            <a href="#stored-files" class="nav-link">
-                <span>▥</span> Stored Files & Chunks
-            </a>
-            <a href="#future-features" class="nav-link">
-                <span>⚙</span> Future Features
-            </a>
+            <a class="nav-link active" href="#overview"><span class="nav-icon">◫</span>Overview</a>
+            <a class="nav-link" href="#files"><span class="nav-icon">▤</span>File management</a>
+            <a class="nav-link" href="#nodes"><span class="nav-icon">⌘</span>Data nodes</a>
+            <a class="nav-link" href="#activity"><span class="nav-icon">◷</span>Activity</a>
         </nav>
+        <div class="sidebar-status">
+            <span class="status-dot {{ 'dot-live' if not node_error else 'dot-unknown' }}"></span>
+            <div><strong>Metadata connection</strong><small>{% if node_error %}Unavailable{% else %}Last request succeeded{% endif %}</small></div>
+        </div>
+        <p class="sidebar-footnote">Three-node distributed storage<br>Dashboard view · local history</p>
     </aside>
 
-    <!-- Main Content -->
-    <main class="dashboard-main">
-
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% for category, message in messages %}
-                <div class="upload-message {{ category }}" role="status">
-                    {{ message }}
-                </div>
-            {% endfor %}
-        {% endwith %}
-
-        <header class="dashboard-header">
-            <div>
-                <h1>Dashboard Overview</h1>
-                <p>Manage your files and distributed storage system.</p>
-            </div>
-            <div class="user-profile">
-                <div class="avatar">☁</div>
-                <span>Distributed Storage</span>
+    <main class="main-content">
+        <header class="topbar">
+            <div class="breadcrumb">Workspace <span>/</span> Overview</div>
+            <div class="topbar-right">
+                <span class="environment-pill"><span class="status-dot {{ 'dot-live' if not node_error else 'dot-unknown' }}"></span>{{ 'Connected' if not node_error else 'Connection unavailable' }}</span>
+                <a class="avatar" href="#overview" aria-label="Distributed FS">DF</a>
             </div>
         </header>
 
-        <!-- Welcome Banner -->
-        <section class="welcome-banner">
+        <section id="overview" class="page-heading">
             <div>
-                <p class="eyebrow">DISTRIBUTED FILE MANAGER</p>
-                <h2>Welcome to your Dashboard!</h2>
-                <p>Your workspace for distributed file storage.</p>
+                <p class="eyebrow">STORAGE OPERATIONS</p>
+                <h1>System overview</h1>
+                <p class="page-subtitle">Monitor the configured data nodes and manage files through the existing metadata workflow.</p>
             </div>
-            <div class="welcome-icon">☁</div>
+            <a class="button button-secondary" href="{{ url_for('home') }}#nodes">↻ <span>Refresh status</span></a>
         </section>
 
-        <!-- File Management -->
-        <section id="file-management" class="dashboard-section">
-            <div class="section-heading">
-                <div>
-                    <h2>File Management</h2>
-                    <p>Upload files to distributed storage.</p>
-                </div>
-            </div>
+        {% if node_error %}
+        <div class="notice notice-warning" role="status"><strong>Metadata status unavailable.</strong> {{ node_error }} Node and backend values are shown as unknown until the metadata server responds.</div>
+        {% endif %}
 
-            <div class="feature-grid">
-                <div class="feature-card">
-                    <div class="feature-icon upload-icon">↑</div>
-                    <h3>Upload File</h3>
-                    <p>
-                        Select a file to split into chunks and distribute
-                        across available data nodes.
-                    </p>
-
-                    <form action="{{ url_for('upload') }}"
-                          method="POST"
-                          enctype="multipart/form-data">
-                        <div class="file-upload-area">
-                            <input type="file"
-                                   id="fileInput"
-                                   name="file"
-                                   required>
-                            <label for="fileInput">Choose a file</label>
-                            <span id="selectedFile">No file selected</span>
-                        </div>
-
-                        <button class="feature-btn" type="submit">
-                            Upload File
-                        </button>
-                    </form>
-                </div>
-
-                <div class="feature-card">
-                    <div class="feature-icon download-icon">↓</div>
-                    <h3>Download File</h3>
-                    <p>
-                        Reconstruct the original file from its stored chunks.
-                    </p>
-                    <div class="download-placeholder">
-                        <span>Download functionality is not connected yet.</span>
-                    </div>
-                    <button class="feature-btn secondary-btn"
-                            type="button" disabled>
-                        Download Coming Soon
-                    </button>
-                </div>
-            </div>
+        <section class="metric-grid" aria-label="System summary">
+            <article class="metric-card">
+                <div class="metric-top"><span class="metric-label">Configured nodes</span><span class="metric-icon icon-blue">⌘</span></div>
+                <div class="metric-value">3</div><div class="metric-foot">node1 · node2 · node3</div>
+            </article>
+            <article class="metric-card">
+                <div class="metric-top"><span class="metric-label">Alive nodes</span><span class="metric-icon icon-green">✓</span></div>
+                <div class="metric-value">{{ online_nodes }}<small> / 3</small></div><div class="metric-foot">{{ dead_nodes }} dead · {{ unknown_nodes }} unknown</div>
+            </article>
+            <article class="metric-card">
+                <div class="metric-top"><span class="metric-label">Local history records</span><span class="metric-icon icon-violet">▤</span></div>
+                <div class="metric-value">{{ local_file_count }}</div><div class="metric-foot">{{ '{:,}'.format(local_bytes) }} bytes recorded locally</div>
+            </article>
+            <article class="metric-card replication-card">
+                <div class="metric-top"><span class="metric-label">Replication configuration</span><span class="metric-icon icon-amber">⟳</span></div>
+                <div class="replication-values"><div><strong>{{ current_replication_factor }}</strong><span>Current backend</span></div><div><strong>{{ reference_replication_factor }}</strong><span>Approved main reference</span></div></div>
+                <div class="metric-foot">Actual assigned replicas are shown per upload below.</div>
+            </article>
         </section>
 
-        <!-- Live Node Monitoring -->
-        <section id="node-monitoring" class="dashboard-section">
+        <section id="nodes" class="content-section">
             <div class="section-heading">
-                <div>
-                    <h2>Node Monitoring</h2>
-                    <p>Current node status as checked by the dashboard.</p>
-                </div>
-                <button class="refresh-link" type="button"
-                        onclick="window.location.reload()">
-                    ↻ Refresh
-                </button>
+                <div><p class="eyebrow">INFRASTRUCTURE</p><h2>Data nodes</h2><p class="section-description">Alive/dead state comes from metadata-server <code>LIST_NODES</code>.</p></div>
+                <span class="section-meta">3 configured</span>
             </div>
-
-            <div class="node-status-grid">
+            <div class="node-grid">
                 {% for node in nodes %}
-                <div class="node-card">
-                    <div class="feature-icon">◉</div>
+                <article class="node-card">
+                    <div class="node-card-head"><div class="node-symbol">N</div><span class="state-pill state-{{ node.state }}"><i></i>{{ node.status }}</span></div>
                     <h3>{{ node.id }}</h3>
-                    <p class="muted-text">
-                        {{ node.host }}:{{ node.port }}
-                    </p>
-                    <span class="status-pill {{ 'status-online' if node.online else 'status-offline' }}">
-                        {{ node.status }}
-                    </span>
-                </div>
-                {% else %}
-                <div class="empty-state">
-                    No node information was returned by the dashboard.
-                </div>
-                {% endfor %}
-            </div>
-
-            <p class="muted-text">
-                Status is based on the dashboard's node health check;
-                it is not a guarantee that every storage operation will succeed.
-            </p>
-        </section>
-
-        <!-- Stored Files and Chunk Locations -->
-        <section id="stored-files" class="dashboard-section">
-            <div class="section-heading">
-                <div>
-                    <h2>Stored Files & Chunk Locations</h2>
-                    <p>Metadata recorded for successful dashboard uploads.</p>
-                </div>
-            </div>
-
-            {% if files %}
-            <div class="stored-files-grid">
-                {% for file in files %}
-                <article class="stored-file-card">
-                    <div class="feature-icon">▤</div>
-                    <h3>{{ file.filename }}</h3>
-
-                    <p class="muted-text">
-                        Size: {{ file.size }} bytes
-                    </p>
-                    <p class="muted-text">
-                        Chunks recorded: {{ file.chunk_count }}
-                    </p>
-                    <p class="muted-text">
-                        Uploaded: {{ file.created_at or 'Unknown' }}
-                    </p>
-
-                    <details>
-                        <summary>View chunk locations</summary>
-
-                        {% if file.chunks %}
-                        <ul class="chunk-list">
-                            {% for chunk in file.chunks %}
-                            <li>
-                                <strong>Chunk {{ chunk.index }}</strong><br>
-                                Node: {{ chunk.node_id }}<br>
-                                Address: {{ chunk.host }}:{{ chunk.port }}<br>
-                                Size: {{ chunk.size }} bytes
-                            </li>
-                            {% endfor %}
-                        </ul>
-                        {% else %}
-                        <p class="muted-text">
-                            No chunk-location metadata is recorded for this file.
-                        </p>
-                        {% endif %}
-                    </details>
+                    <p class="node-address">{{ node.host }}:{{ node.port }}</p>
+                    <div class="node-detail"><span>Reported free space</span><strong>Unavailable</strong></div>
+                    <div class="node-detail"><span>Last heartbeat</span><strong>Unavailable</strong></div>
                 </article>
                 {% endfor %}
             </div>
-            {% else %}
-            <div class="empty-state">
-                No files have been recorded yet. Upload a file to see its metadata here.
-            </div>
-            {% endif %}
+            <p class="inline-note">The current metadata response does not include free bytes, heartbeat timestamps, or re-replication event details. Storage capacity and recovery status are therefore not inferred here.</p>
         </section>
 
-        <!-- Future Features -->
-        <section id="future-features" class="dashboard-section">
-            <div class="future-grid">
-                <div class="future-card">
-                    <div class="future-icon">▤</div>
-                    <h3>Chunk Distribution</h3>
-                    <p>Visualize how file chunks are distributed.</p>
-                    <span class="coming-soon-badge">Metadata View Available Above</span>
+        <section id="files" class="content-section">
+            <div class="section-heading">
+                <div><p class="eyebrow">FILE OPERATIONS</p><h2>File management</h2><p class="section-description">Uploads are placed by metadata; downloads use metadata locations and verify each chunk.</p></div>
+            </div>
+            <div class="upload-panel">
+                <div class="upload-panel-copy"><span class="upload-icon">↑</span><div><h3>Upload files</h3><p>Choose or drop multiple files. Jobs run smallest first; progress reflects confirmed replica bytes.</p></div></div>
+                <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="Choose or drop files">
+                    <input id="file-picker" type="file" multiple hidden>
+                    <span class="drop-icon">⇧</span><strong>Drop files here or <button id="browse-button" class="text-button" type="button">browse</button></strong>
+                    <small>Maximum per request: {{ (512 * 1024 * 1024) // (1024 * 1024) }} MB · Files are sent through metadata placement</small>
                 </div>
+                <div id="upload-queue" class="queue-list" aria-live="polite"></div>
+                <div class="upload-actions"><span id="queue-summary" class="muted"></span><button id="upload-button" class="button button-primary" type="button" disabled>Upload selected files</button></div>
+            </div>
 
-                <div class="future-card">
-                    <div class="future-icon">⟳</div>
-                    <h3>Failure Recovery</h3>
-                    <p>Replication and automatic recovery are not connected yet.</p>
-                    <span class="coming-soon-badge">Planned</span>
-                </div>
+            <div class="table-panel">
+                <div class="table-heading"><div><h3>Local Dashboard History</h3><p>Not a metadata-server file listing. Existing dashboard records are preserved.</p></div><span class="table-count">{{ local_file_count }} records</span></div>
+                {% if files %}
+                <div class="table-scroll"><table><thead><tr><th>File</th><th>Size</th><th>Upload time</th><th>Status</th><th>Actual assigned replicas</th><th>Integrity</th><th></th></tr></thead><tbody>
+                {% for file in files %}
+                <tr>
+                    <td><div class="file-cell"><span class="file-type">▤</span><span><strong>{{ file.filename }}</strong><small>{% if file.metadata_file_id %}Metadata ID: {{ file.metadata_file_id }}{% else %}Dashboard-local record{% endif %}</small></span></div></td>
+                    <td>{{ '{:,}'.format(file.size or 0) }} B</td>
+                    <td>{{ file.created_at or 'Unknown' }}</td>
+                    <td><span class="table-status status-{{ 'success' if file.upload_status == 'Uploaded' else 'failed' if file.upload_status == 'Failed' else 'pending' }}">{{ file.upload_status }}</span></td>
+                    <td>{% if file.replica_counts %}{{ file.replica_counts|join(', ') }} per chunk{% else %}Unavailable{% endif %}</td>
+                    <td>{{ file.integrity_status or 'Unavailable' }}</td>
+                    <td>{% if file.download_available and file.upload_status == 'Uploaded' %}<button class="button button-small download-button" type="button" data-history-id="{{ file.id }}" data-size="{{ file.size }}" data-filename="{{ file.filename }}">Download</button>{% else %}<span class="muted">Unavailable</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+                </tbody></table></div>
+                {% else %}<div class="empty-state"><span class="empty-icon">▤</span><strong>No local dashboard history</strong><p>Files registered through other clients are not listed because the metadata protocol has no file-list operation.</p></div>{% endif %}
+            </div>
+            <div id="download-queue" class="queue-list download-queue" aria-live="polite"></div>
+        </section>
 
-                <div class="future-card">
-                    <div class="future-icon">▥</div>
-                    <h3>Storage Analytics</h3>
-                    <p>Monitor storage capacity and file activity.</p>
-                    <span class="coming-soon-badge">Planned</span>
-                </div>
+        <section id="activity" class="content-section">
+            <div class="section-heading"><div><p class="eyebrow">AUDIT TRAIL</p><h2>Recent dashboard activity</h2><p class="section-description">Only operations recorded by this dashboard are shown.</p></div><span class="section-meta">Local activity</span></div>
+            <div class="activity-panel">
+                {% if activities %}
+                {% for activity in activities %}
+                <div class="activity-row"><span class="activity-mark {{ 'mark-success' if activity.status == 'Success' else 'mark-failure' if activity.status == 'Failed' else 'mark-pending' }}">{{ '✓' if activity.status == 'Success' else '!' if activity.status == 'Failed' else '·' }}</span><div class="activity-copy"><strong>{{ activity.operation }} · {{ activity.filename }}</strong><small>{{ activity.message or activity.status }}</small></div><span class="activity-status">{{ activity.status }}</span><time>{{ activity.created_at }}</time></div>
+                {% endfor %}
+                {% else %}<div class="empty-state"><strong>No dashboard activity yet</strong><p>New upload and download attempts will appear here.</p></div>{% endif %}
             </div>
         </section>
 
-        <footer class="dashboard-footer">
-            Distributed File Manager · PBL Project
-        </footer>
-
+        <footer class="page-footer"><span>Distributed File Management System</span><span>Metadata file listing, total capacity, and recovery events are not exposed by the current backend.</span></footer>
     </main>
 </div>
-
 <script>
-    const fileInput = document.getElementById("fileInput");
-    const selectedFile = document.getElementById("selectedFile");
+(() => {
+    const picker = document.getElementById('file-picker');
+    const dropZone = document.getElementById('drop-zone');
+    const queue = document.getElementById('upload-queue');
+    const uploadButton = document.getElementById('upload-button');
+    const summary = document.getElementById('queue-summary');
+    let selectedFiles = [];
+    let activeUploads = 0;
 
-    fileInput.addEventListener("change", function () {
-        selectedFile.textContent = this.files.length
-            ? this.files[0].name
-            : "No file selected";
+    const bytes = value => {
+        if (value < 1024) return `${value} B`;
+        const units = ['KB', 'MB', 'GB', 'TB'];
+        let size = value / 1024, unit = 0;
+        while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++; }
+        return `${size.toFixed(1)} ${units[unit]}`;
+    };
+    const safeText = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    function renderQueue() {
+        queue.innerHTML = selectedFiles.map((file, index) => `<div class="queue-item" data-index="${index}"><span class="queue-file-icon">▤</span><span class="queue-file-copy"><strong>${safeText(file.name)}</strong><small>${bytes(file.size)} · Pending</small></span><span class="queue-state">Pending</span></div>`).join('');
+        summary.textContent = selectedFiles.length ? `${selectedFiles.length} file(s), smallest first` : '';
+        uploadButton.disabled = !selectedFiles.length || activeUploads > 0;
+    }
+    function addFiles(fileList) {
+        const known = new Set(selectedFiles.map(file => `${file.name}:${file.size}:${file.lastModified}`));
+        for (const file of fileList) {
+            const key = `${file.name}:${file.size}:${file.lastModified}`;
+            if (!known.has(key)) { selectedFiles.push(file); known.add(key); }
+        }
+        selectedFiles.sort((a, b) => a.size - b.size || a.name.localeCompare(b.name));
+        renderQueue();
+    }
+    document.getElementById('browse-button').addEventListener('click', () => picker.click());
+    dropZone.addEventListener('click', event => { if (!event.target.closest('button')) picker.click(); });
+    dropZone.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); picker.click(); } });
+    picker.addEventListener('change', () => { addFiles(picker.files); picker.value = ''; });
+    for (const eventName of ['dragenter', 'dragover']) dropZone.addEventListener(eventName, event => { event.preventDefault(); dropZone.classList.add('drop-active'); });
+    for (const eventName of ['dragleave', 'drop']) dropZone.addEventListener(eventName, event => { event.preventDefault(); dropZone.classList.remove('drop-active'); });
+    dropZone.addEventListener('drop', event => addFiles(event.dataTransfer.files));
+
+    async function pollJob(jobId, item, label) {
+        while (true) {
+            const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+            const job = await response.json();
+            if (!response.ok) throw new Error(job.error || 'Could not read job status');
+            const subline = item.querySelector('small');
+            const state = item.querySelector('.queue-state');
+            const previousBar = item.querySelector('progress');
+            const bar = previousBar || document.createElement('progress');
+            if (!previousBar) item.appendChild(bar);
+            const percent = job.progress_percent || 0;
+            bar.max = 100; bar.value = percent; bar.setAttribute('aria-label', `${label} progress`);
+            if (subline) subline.textContent = `${bytes(job.progress_bytes || 0)} / ${bytes(job.operation === 'upload' ? (job.assigned_bytes || 0) : (job.total_bytes || 0))} · ${job.phase || job.status}`;
+            if (state) { state.textContent = job.status === 'running' ? `${percent}%` : job.status; state.className = `queue-state queue-${job.status}`; }
+            if (job.status !== 'running') {
+                if (job.status !== 'success') throw new Error(job.error || 'Operation failed');
+                return job;
+            }
+            await new Promise(resolve => setTimeout(resolve, 450));
+        }
+    }
+    async function uploadOne(file, index) {
+        const item = queue.querySelector(`[data-index="${index}"]`);
+        item.querySelector('.queue-state').textContent = 'Sending';
+        item.querySelector('.queue-file-copy small').textContent = `${bytes(file.size)} · Sending to dashboard`;
+        const form = new FormData(); form.append('file', file, file.name);
+        const response = await fetch('{{ url_for("start_upload") }}', {method:'POST', body:form});
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Upload request failed');
+        await pollJob(result.job_id, item, 'Upload');
+    }
+    uploadButton.addEventListener('click', async () => {
+        if (activeUploads || !selectedFiles.length) return;
+        activeUploads = 1; uploadButton.disabled = true;
+        const snapshot = [...selectedFiles];
+        for (let index = 0; index < snapshot.length; index++) {
+            try { await uploadOne(snapshot[index], index); }
+            catch (error) {
+                const item = queue.querySelector(`[data-index="${index}"]`);
+                item.querySelector('.queue-state').textContent = 'Failed';
+                item.querySelector('.queue-state').className = 'queue-state queue-failed';
+                item.querySelector('.queue-file-copy small').textContent = `${bytes(snapshot[index].size)} · ${error.message}`;
+            }
+        }
+        activeUploads = 0; uploadButton.disabled = false;
+        uploadButton.textContent = 'Upload again';
+        window.location.reload();
     });
-</script>
 
+    const downloadButtons = [...document.querySelectorAll('.download-button')];
+    downloadButtons.forEach(button => button.addEventListener('click', async () => {
+        if (activeUploads) return;
+        activeUploads = 1;
+        const jobs = downloadButtons;
+        jobs.forEach(other => other.disabled = true);
+        const target = button;
+        const panel = document.getElementById('download-queue');
+        const row = document.createElement('div'); row.className = 'queue-item';
+        row.innerHTML = `<span class="queue-file-icon">↓</span><span class="queue-file-copy"><strong>${safeText(target.dataset.filename)}</strong><small>${bytes(Number(target.dataset.size))} · Queued</small></span><span class="queue-state">Queued</span>`;
+        panel.prepend(row);
+        try {
+            const response = await fetch('{{ url_for("start_download") }}', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({history_id:target.dataset.historyId})});
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Download could not start');
+            const job = await pollJob(result.job_id, row, 'Download');
+            const link = document.createElement('a'); link.href = job.download_url; link.download = target.dataset.filename; link.className = 'button button-small button-primary'; link.textContent = 'Save file'; row.appendChild(link); link.click();
+        } catch (error) {
+            row.querySelector('.queue-state').textContent = 'Failed';
+            row.querySelector('.queue-state').className = 'queue-state queue-failed';
+            row.querySelector('.queue-file-copy small').textContent = error.message;
+        } finally {
+            activeUploads = 0; jobs.forEach(other => other.disabled = false);
+        }
+    }));
+})();
+</script>
 </body>
 </html>
