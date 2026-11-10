@@ -1,7 +1,72 @@
+import sqlite3
+
+import pytest
+
 from metadata_server import db, queries
 from client.upload import call
 from dashboard.app import build_recovery_notice
 from metadata_server.server import MetadataServer
+
+
+def test_initialize_recreates_empty_integer_file_id_schema(tmp_path):
+    database = tmp_path / "metadata.db"
+    with sqlite3.connect(database) as conn:
+        conn.execute(
+            """CREATE TABLE FILES (
+                FILE_ID INTEGER PRIMARY KEY NOT NULL,
+                FILE_NAME TEXT NOT NULL,
+                SIZE INTEGER NOT NULL,
+                CREATED_AT TEXT NOT NULL,
+                STATUS TEXT
+            )"""
+        )
+
+    db.initialize(database)
+
+    with db.connection(database) as conn:
+        file_id = next(
+            row for row in conn.execute("PRAGMA table_info(FILES)")
+            if row["name"] == "FILE_ID"
+        )
+        assert file_id["type"] == "TEXT"
+        assert file_id["pk"] == 1
+        queries.register_node(conn, "node-a", "127.0.0.1", 1, 100, 100)
+        planned, _ = queries.create_upload_plan(
+            conn,
+            "a" * 32,
+            "sample.bin",
+            1,
+            [{"chunk_id": "chunk-a", "chunk_index": 0, "chunk_size": 1,
+              "checksum": "a" * 64}],
+            100,
+            1,
+        )
+        assert len(planned) == 1
+
+
+def test_initialize_preserves_populated_incompatible_file_table(tmp_path):
+    database = tmp_path / "metadata.db"
+    with sqlite3.connect(database) as conn:
+        conn.execute(
+            """CREATE TABLE FILES (
+                FILE_ID INTEGER PRIMARY KEY NOT NULL,
+                FILE_NAME TEXT NOT NULL,
+                SIZE INTEGER NOT NULL,
+                CREATED_AT TEXT NOT NULL,
+                STATUS TEXT
+            )"""
+        )
+        conn.execute(
+            "INSERT INTO FILES VALUES (1, 'sample.bin', 1, 'now', 'COMPLETE')"
+        )
+
+    with pytest.raises(
+        RuntimeError, match="legacy metadata tables contain data and need migration: FILES"
+    ):
+        db.initialize(database)
+
+    with sqlite3.connect(database) as conn:
+        assert conn.execute("SELECT FILE_ID FROM FILES").fetchone() == (1,)
 
 
 def test_replication_issues_are_reported_for_incomplete_replica_sets(tmp_path):

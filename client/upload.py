@@ -1,6 +1,7 @@
 import os
 import socket
 import uuid
+from collections.abc import Callable
 
 from client.chunker import split_file
 from shared import constants
@@ -14,7 +15,7 @@ def call(host, port, msg, payload=b"", timeout=5):
         return recv_msg(s)
 
 
-def upload_file(path):
+def upload_file(path, progress_callback: Callable[[int, int], None] | None = None):
     file_id = uuid.uuid4().hex
     descriptors = []
     for index, data, checksum in split_file(path, constants.CHUNK_SIZE):
@@ -31,6 +32,7 @@ def upload_file(path):
         raise RuntimeError(response.get("error", "metadata server rejected upload plan"))
 
     planned = response.get("chunks", [])
+    total_chunks = len(planned)
     for index, data, checksum in split_file(path, constants.CHUNK_SIZE):
         if index >= len(planned):
             raise RuntimeError("metadata upload plan is incomplete")
@@ -63,4 +65,6 @@ def upload_file(path):
                 last_error = str(error)
         if stored == 0:
             raise RuntimeError(f"all planned nodes failed for chunk {index}: {last_error}")
+        if progress_callback is not None:
+            progress_callback(index + 1, total_chunks)
     return response["file_id"]

@@ -3,6 +3,8 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
+import uuid
 from pathlib import Path
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
@@ -24,6 +26,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / 'dashboard_files.db'
 METADATA_HOST = os.environ.get('METADATA_HOST', '127.0.0.1')
 METADATA_PORT = int(os.environ.get('METADATA_PORT', '9999'))
+upload_jobs = {}
+upload_jobs_lock = threading.Lock()
 
 
 def resolve_metadata():
@@ -59,9 +63,11 @@ def _nodes_from_metadata():
     meta_host, meta_port = resolve_metadata()
     try:
         response, _ = call(meta_host, meta_port, {'type': 'LIST_NODES'}, timeout=3)
-        nodes = response.get('nodes', []) if isinstance(response, dict) else []
-    except Exception:
-        nodes = []
+        if response.get('status') != 'ok':
+            return [], response.get('error', 'Metadata server rejected the node request.')
+        nodes = response.get('nodes', [])
+    except (OSError, ValueError, KeyError) as exc:
+        return [], str(exc)
     results = []
     for node in nodes:
         results.append({
@@ -71,7 +77,7 @@ def _nodes_from_metadata():
             'online': bool(node.get('alive', False)),
             'status': 'Online' if node.get('alive', False) else 'Offline',
         })
-    return results
+    return results, None
 
 
 def build_recovery_notice(nodes):
@@ -105,16 +111,102 @@ def _files_from_db():
     return out
 
 
+def _chunk_rows(files):
+    rows = []
+    for file in files:
+        for chunk in file['chunks']:
+            nodes = chunk.get('nodes', [])
+            if not nodes:
+                rows.append({
+                    'filename': file['filename'],
+                    'chunk_index': chunk.get('chunk_index', '—'),
+                    'chunk_id': chunk.get('chunk_id', '—'),
+                    'node_id': None,
+                    'endpoint': None,
+                    'status': 'No replica',
+                    'online': False,
+                })
+                continue
+            for node in nodes:
+                online = bool(node.get('alive', True))
+                rows.append({
+                    'filename': file['filename'],
+                    'chunk_index': chunk.get('chunk_index', '—'),
+                    'chunk_id': chunk.get('chunk_id', '—'),
+                    'node_id': node.get('node_id', 'unknown'),
+                    'endpoint': f"{node.get('host', 'unknown')}:{node.get('port', 0)}",
+                    'status': 'Stored · online' if online else 'Stored · node offline',
+                    'online': online,
+                })
+    return rows
+
+
+def _update_upload_job(job_id, **changes):
+    with upload_jobs_lock:
+        upload_jobs[job_id].update(changes)
+
+
+def _process_upload(job_id, temp_path, filename, file_size):
+    try:
+        _update_upload_job(job_id, state='running', phase='Distributing chunks', percent=15)
+
+        def update_progress(completed, total):
+            percent = 15 + round(75 * completed / total) if total else 90
+            _update_upload_job(
+                job_id,
+                phase=f'Distributing chunks ({completed}/{total})',
+                percent=percent,
+            )
+
+        file_id = upload_file(temp_path, progress_callback=update_progress)
+        _update_upload_job(job_id, phase='Loading chunk locations', percent=92)
+
+        meta_host, meta_port = resolve_metadata()
+        response, _ = call(
+            meta_host,
+            meta_port,
+            {'type': 'GET_LOCATIONS', 'file_id': file_id},
+            timeout=5,
+        )
+        if response.get('status') != 'ok':
+            raise RuntimeError(response.get('error', 'Could not load stored chunk locations.'))
+        chunk_data = response.get('chunks', [])
+        with get_db() as conn:
+            conn.execute(
+                'INSERT OR REPLACE INTO files (file_id, filename, size, chunks, created_at) '
+                'VALUES (?, ?, ?, ?, datetime("now"))',
+                (file_id, filename, file_size, json.dumps(chunk_data)),
+            )
+        _update_upload_job(
+            job_id,
+            state='complete',
+            phase='Upload complete',
+            percent=100,
+            file_id=file_id,
+        )
+    except (OSError, RuntimeError, ValueError, KeyError) as exc:
+        _update_upload_job(job_id, state='error', phase='Upload failed', error=str(exc))
+    finally:
+        try:
+            os.remove(temp_path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            _update_upload_job(job_id, cleanup_error=str(exc))
+
+
 @app.route('/')
 @app.route('/home')
 def home():
     files = _files_from_db()
-    nodes = _nodes_from_metadata()
+    nodes, node_error = _nodes_from_metadata()
     recovery_notice = build_recovery_notice(nodes)
     return render_template(
         'index.html',
         files=files,
+        chunk_rows=_chunk_rows(files),
         nodes=nodes,
+        node_error=node_error,
         total_files=len(files),
         online_nodes=sum(1 for n in nodes if n['online']),
         total_nodes=len(nodes),
@@ -162,6 +254,47 @@ def upload():
     return redirect(url_for('home'))
 
 
+@app.route('/api/uploads', methods=['POST'])
+def start_upload():
+    uploaded = request.files.get('file')
+    if uploaded is None or not uploaded.filename:
+        return jsonify({'error': 'Please choose a file first.'}), 400
+
+    filename = secure_filename(uploaded.filename)
+    if not filename:
+        return jsonify({'error': 'The filename is invalid.'}), 400
+
+    with tempfile.NamedTemporaryFile(
+        delete=False, suffix=os.path.splitext(filename)[1]
+    ) as handle:
+        temp_path = handle.name
+    uploaded.save(temp_path)
+    job_id = uuid.uuid4().hex
+    with upload_jobs_lock:
+        upload_jobs[job_id] = {
+            'state': 'queued',
+            'phase': 'Waiting to distribute chunks',
+            'percent': 10,
+            'filename': filename,
+        }
+    worker = threading.Thread(
+        target=_process_upload,
+        args=(job_id, temp_path, filename, os.path.getsize(temp_path)),
+        daemon=True,
+    )
+    worker.start()
+    return jsonify({'job_id': job_id}), 202
+
+
+@app.route('/api/uploads/<job_id>')
+def upload_status(job_id):
+    with upload_jobs_lock:
+        job = upload_jobs.get(job_id)
+        if job is None:
+            return jsonify({'error': 'Upload job not found.'}), 404
+        return jsonify(job)
+
+
 def _lookup_name(file_id):
     with get_db() as conn:
         row = conn.execute('SELECT filename FROM files WHERE file_id = ?', (file_id,)).fetchone()
@@ -184,12 +317,39 @@ def download(file_id):
 
 @app.route('/api/files')
 def api_files():
-    return jsonify({'files': _files_from_db()})
+    files = _files_from_db()
+    refreshed_files = []
+    meta_host, meta_port = resolve_metadata()
+    try:
+        for file in files:
+            response, _ = call(
+                meta_host,
+                meta_port,
+                {'type': 'GET_LOCATIONS', 'file_id': file['file_id']},
+                timeout=3,
+            )
+            if response.get('status') != 'ok':
+                if response.get('error') == 'file not found':
+                    continue
+                raise RuntimeError(response.get('error', 'Could not refresh chunk locations.'))
+            file['chunks'] = response.get('chunks', [])
+            refreshed_files.append(file)
+    except (OSError, RuntimeError, ValueError, KeyError) as exc:
+        return jsonify({
+            'files': files,
+            'chunk_rows': _chunk_rows(files),
+            'error': str(exc),
+        }), 503
+    return jsonify({
+        'files': refreshed_files,
+        'chunk_rows': _chunk_rows(refreshed_files),
+    })
 
 
 @app.route('/api/nodes')
 def api_nodes():
-    return jsonify({'nodes': _nodes_from_metadata()})
+    nodes, error = _nodes_from_metadata()
+    return jsonify({'nodes': nodes, 'error': error, 'available': error is None})
 
 
 @app.errorhandler(413)

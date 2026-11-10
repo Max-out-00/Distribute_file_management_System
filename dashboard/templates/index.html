@@ -35,9 +35,24 @@
             <header class="dashboard-header">
                 <div>
                     <h1>Dashboard Overview</h1>
-                    <p>Upload files, check node health, and download files through the browser.</p>
+                    <p>Live node health, file inventory, and replica placement.</p>
                 </div>
             </header>
+
+            <section class="overview-grid" aria-label="Storage overview">
+                <article class="overview-card">
+                    <span class="overview-label">Uploaded files</span>
+                    <strong id="totalFiles">{{ total_files }}</strong>
+                </article>
+                <article class="overview-card">
+                    <span class="overview-label">Live nodes</span>
+                    <strong><span id="onlineNodes">{{ online_nodes }}</span><small> / <span id="totalNodes">{{ total_nodes }}</span></small></strong>
+                </article>
+                <article class="overview-card">
+                    <span class="overview-label">Cluster status</span>
+                    <strong id="clusterStatus" class="{% if node_error or not online_nodes %}unavailable{% elif online_nodes < total_nodes %}degraded{% else %}healthy{% endif %}">{% if node_error or not online_nodes %}Unavailable{% elif online_nodes < total_nodes %}Degraded{% else %}Healthy{% endif %}</strong>
+                </article>
+            </section>
 
             <section class="dashboard-section">
                 <div class="section-heading">
@@ -53,11 +68,12 @@
                     </div>
                     <div id="uploadProgressWrap" class="progress-wrap hidden">
                         <div class="progress-meta">
-                            <span>Uploading</span>
+                            <span id="uploadPhase">Sending file</span>
                             <strong id="uploadPercent">0%</strong>
                         </div>
-                        <div class="progress-bar"><span id="uploadProgressFill"></span></div>
+                        <div class="progress-bar" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="uploadProgressFill"></span></div>
                     </div>
+                    <p id="uploadError" class="inline-error hidden" role="alert"></p>
                     <button id="uploadButton" class="feature-btn" type="submit">Upload File</button>
                 </form>
             </section>
@@ -66,19 +82,22 @@
                 <div class="section-heading">
                     <div>
                         <h2>Node Monitoring</h2>
+                        <p id="nodeRefreshStatus" class="muted-text">{{ node_error or 'Refreshing live status every 5 seconds' }}</p>
                     </div>
-                    <button class="refresh-link" type="button" onclick="window.location.reload()">Refresh</button>
+                    <button id="refreshButton" class="refresh-link" type="button">Refresh</button>
                 </div>
-                <div class="node-status-grid">
+                <div class="node-status-grid" id="nodeStatusGrid">
                     {% for node in nodes %}
-                    <div class="node-card">
-                        <div class="feature-icon">◉</div>
-                        <h3>{{ node.id }}</h3>
+                    <div class="node-card" data-node-id="{{ node.id }}">
+                        <div class="node-card-heading">
+                            <span class="node-indicator {{ 'online' if node.online else 'offline' }}"></span>
+                            <h3>{{ node.id }}</h3>
+                        </div>
                         <p class="muted-text">{{ node.host }}:{{ node.port }}</p>
                         <span class="status-pill {{ 'status-online' if node.online else 'status-offline' }}">{{ node.status }}</span>
                     </div>
                     {% else %}
-                    <div class="empty-state">No metadata server nodes were reported.</div>
+                    <div class="empty-state">{% if node_error %}Unable to load nodes: {{ node_error }}{% else %}No metadata server nodes were reported.{% endif %}</div>
                     {% endfor %}
                 </div>
             </section>
@@ -86,69 +105,67 @@
             <section class="dashboard-section">
                 <div class="section-heading">
                     <div>
-                        <h2>Stored Files</h2>
+                        <h2>File Library</h2>
+                        <p>Uploaded files and their download details.</p>
                     </div>
                 </div>
-                {% if files %}
-                <div class="stored-files-grid">
+                <div class="stored-files-grid" id="storedFilesGrid">
+                    {% if files %}
                     {% for file in files %}
-                    <article class="stored-file-card">
+                    <article class="stored-file-card" data-file-id="{{ file.file_id }}">
                         <div class="feature-icon">▤</div>
-                        <h3>{{ file.filename }}</h3>
-                        <p class="muted-text">Size: {{ file.size }} bytes</p>
-                        <p class="muted-text">Chunks: {{ file.chunk_count }}</p>
-                        <p class="muted-text">Uploaded: {{ file.created_at }}</p>
-                        <a class="feature-btn secondary-btn download-action" href="{{ url_for('download', file_id=file.file_id) }}" data-file-id="{{ file.file_id }}">Download</a>
-                        {% if file.chunks %}
-                        <details>
-                            <summary>View chunk locations</summary>
-                            <ul class="chunk-list">
-                                {% for chunk in file.chunks %}
-                                <li><strong>Chunk {{ chunk.chunk_index }}</strong><br>{{ chunk.nodes[0].node_id if chunk.nodes else 'No replica' }}</li>
-                                {% endfor %}
-                            </ul>
-                        </details>
-                        {% endif %}
+                        <div class="file-card-title">
+                            <h3 title="{{ file.filename }}">{{ file.filename }}</h3>
+                            <span class="file-status">Stored</span>
+                        </div>
+                        <p class="file-size">{{ file.size|filesizeformat }}</p>
+                        <div class="file-card-meta">
+                            <span>{{ file.chunk_count }} chunks</span>
+                            <span title="{{ file.file_id }}">ID {{ file.file_id[:10] }}…</span>
+                        </div>
+                        <p class="file-date">Uploaded {{ file.created_at }}</p>
+                        <a class="feature-btn secondary-btn download-action" href="{{ url_for('download', file_id=file.file_id) }}" data-file-id="{{ file.file_id }}" data-filename="{{ file.filename }}">Download</a>
                     </article>
                     {% endfor %}
+                    {% else %}
+                    <div class="empty-state">No uploaded files yet.</div>
+                    {% endif %}
                 </div>
-                {% else %}
-                <div class="empty-state">No uploaded files yet.</div>
-                {% endif %}
             </section>
 
             <section class="dashboard-section">
                 <div class="section-heading">
                     <div>
-                        <h2>Data Log</h2>
+                        <h2>Chunk placement</h2>
+                        <p id="placementRefreshStatus">Each row shows a stored replica and its current node health.</p>
                     </div>
                 </div>
-                {% if files %}
                 <div class="log-table-wrap">
-                    <table class="log-table">
+                    <table class="log-table" id="chunkPlacementTable">
                         <thead>
                             <tr>
-                                <th>File ID</th>
-                                <th>Filename</th>
-                                <th>Uploaded</th>
-                                <th>Chunks</th>
+                                <th>File</th>
+                                <th>Chunk</th>
+                                <th>Chunk ID</th>
+                                <th>Stored on node</th>
+                                <th>Replica status</th>
                             </tr>
                         </thead>
-                        <tbody>
-                            {% for file in files %}
+                        <tbody id="chunkPlacementBody">
+                            {% for row in chunk_rows %}
                             <tr>
-                                <td>{{ file.file_id }}</td>
-                                <td>{{ file.filename }}</td>
-                                <td>{{ file.created_at }}</td>
-                                <td>{{ file.chunk_count }}</td>
+                                <td>{{ row.filename }}</td>
+                                <td>{{ row.chunk_index }}</td>
+                                <td class="chunk-id-cell">{{ row.chunk_id }}</td>
+                                <td>{{ row.node_id or '—' }}{% if row.endpoint %}<small>{{ row.endpoint }}</small>{% endif %}</td>
+                                <td><span class="status-pill {{ 'status-online' if row.online else 'status-offline' }}">{{ row.status }}</span></td>
                             </tr>
+                            {% else %}
+                            <tr><td class="empty-table" colspan="5">Chunk locations will appear here after a file is uploaded.</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
-                {% else %}
-                <div class="empty-state">No data log entries yet.</div>
-                {% endif %}
             </section>
         </main>
     </div>
@@ -159,7 +176,10 @@
         const uploadProgressWrap = document.getElementById('uploadProgressWrap');
         const uploadProgressFill = document.getElementById('uploadProgressFill');
         const uploadPercent = document.getElementById('uploadPercent');
+        const uploadPhase = document.getElementById('uploadPhase');
+        const uploadError = document.getElementById('uploadError');
         const uploadButton = document.getElementById('uploadButton');
+        const progressBar = uploadProgressWrap.querySelector('[role="progressbar"]');
 
         fileInput.addEventListener('change', function () {
             selectedFile.textContent = this.files.length ? this.files[0].name : 'No file selected';
@@ -172,88 +192,265 @@
             event.preventDefault();
             const formData = new FormData(uploadForm);
             const xhr = new XMLHttpRequest();
-            const file = fileInput.files[0];
+            let pollingTimer;
 
             uploadProgressWrap.classList.remove('hidden');
+            uploadError.classList.add('hidden');
+            uploadError.textContent = '';
             uploadButton.disabled = true;
             uploadPercent.textContent = '0%';
             uploadProgressFill.style.width = '0%';
+            setUploadProgress(0, 'Sending file to dashboard');
 
-            xhr.open('POST', uploadForm.action, true);
+            xhr.open('POST', '{{ url_for("start_upload") }}', true);
             xhr.upload.addEventListener('progress', function (progressEvent) {
                 if (!progressEvent.lengthComputable) {
                     return;
                 }
-                const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100);
-                uploadPercent.textContent = `${percent}%`;
-                uploadProgressFill.style.width = `${percent}%`;
+                const percent = Math.round((progressEvent.loaded / progressEvent.total) * 10);
+                setUploadProgress(percent, 'Sending file to dashboard');
             });
             xhr.addEventListener('load', function () {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    window.location.reload();
-                } else {
-                    uploadButton.disabled = false;
-                    uploadProgressWrap.classList.add('hidden');
-                    alert('Upload failed. Please try again.');
+                let result;
+                try {
+                    result = JSON.parse(xhr.responseText);
+                } catch (_error) {
+                    failUpload('The server returned an invalid upload response.');
+                    return;
                 }
+                if (xhr.status !== 202 || !result.job_id) {
+                    failUpload(result.error || 'Could not start the upload.');
+                    return;
+                }
+                setUploadProgress(10, 'Preparing distributed upload');
+                pollingTimer = window.setInterval(() => pollUpload(result.job_id), 350);
             });
             xhr.addEventListener('error', function () {
-                uploadButton.disabled = false;
-                uploadProgressWrap.classList.add('hidden');
-                alert('Upload failed. Please try again.');
+                failUpload('Could not send the file to the dashboard. Please try again.');
             });
             xhr.send(formData);
-        });
 
-        document.querySelectorAll('.download-action').forEach(function (link) {
-            link.addEventListener('click', async function (event) {
-                event.preventDefault();
-                const fileId = link.dataset.fileId;
-                const progressWrap = document.createElement('div');
-                progressWrap.className = 'progress-wrap download-progress';
-                progressWrap.innerHTML = '<div class="progress-meta"><span>Downloading</span><strong id="downloadPercent">0%</strong></div><div class="progress-bar"><span id="downloadProgressFill"></span></div>';
-                link.parentNode.insertBefore(progressWrap, link.nextSibling);
-
+            async function pollUpload(jobId) {
                 try {
-                    const response = await fetch(`/download/${fileId}`);
+                    const response = await fetch(`/api/uploads/${jobId}`);
+                    const job = await response.json();
                     if (!response.ok) {
-                        throw new Error('download failed');
+                        throw new Error(job.error || 'Could not read upload progress.');
                     }
-                    const total = parseInt(response.headers.get('Content-Length') || '0', 10) || 0;
-                    const reader = response.body.getReader();
-                    const chunks = [];
-                    let received = 0;
-
-                    while (true) {
-                        const result = await reader.read();
-                        if (result.done) {
-                            break;
-                        }
-                        chunks.push(result.value);
-                        received += result.value.length;
-                        const percent = total ? Math.min(100, Math.round((received / total) * 100)) : 0;
-                        const downloadPercent = progressWrap.querySelector('#downloadPercent');
-                        const downloadProgressFill = progressWrap.querySelector('#downloadProgressFill');
-                        downloadPercent.textContent = `${percent}%`;
-                        downloadProgressFill.style.width = `${percent}%`;
+                    setUploadProgress(job.percent, job.phase);
+                    if (job.state === 'complete') {
+                        window.clearInterval(pollingTimer);
+                        window.location.reload();
+                    } else if (job.state === 'error') {
+                        window.clearInterval(pollingTimer);
+                        failUpload(job.error || 'Upload failed.');
                     }
-
-                    const blob = new Blob(chunks);
-                    const blobUrl = URL.createObjectURL(blob);
-                    const downloadAnchor = document.createElement('a');
-                    downloadAnchor.href = blobUrl;
-                    downloadAnchor.download = link.textContent.trim() === 'Download' ? 'download.bin' : link.textContent.trim();
-                    document.body.appendChild(downloadAnchor);
-                    downloadAnchor.click();
-                    downloadAnchor.remove();
-                    URL.revokeObjectURL(blobUrl);
-                    progressWrap.remove();
                 } catch (error) {
-                    progressWrap.remove();
-                    alert('Download failed. Please try again.');
+                    window.clearInterval(pollingTimer);
+                    failUpload(error.message);
                 }
-            });
+            }
+
+            function failUpload(message) {
+                if (pollingTimer) {
+                    window.clearInterval(pollingTimer);
+                }
+                uploadButton.disabled = false;
+                uploadPhase.textContent = 'Upload failed';
+                uploadError.textContent = message;
+                uploadError.classList.remove('hidden');
+            }
         });
+
+        function setUploadProgress(percent, phase) {
+            const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+            uploadPercent.textContent = `${safePercent}%`;
+            uploadPhase.textContent = phase || 'Uploading';
+            uploadProgressFill.style.width = `${safePercent}%`;
+            progressBar.setAttribute('aria-valuenow', String(safePercent));
+        }
+
+        document.getElementById('refreshButton').addEventListener('click', refreshDashboard);
+        window.setInterval(refreshDashboard, 5000);
+        let refreshInProgress = false;
+        refreshDashboard();
+
+        async function refreshDashboard() {
+            if (refreshInProgress) return;
+            refreshInProgress = true;
+            try {
+                await Promise.all([refreshNodes(), refreshFiles()]);
+            } finally {
+                refreshInProgress = false;
+            }
+        }
+
+        async function refreshNodes() {
+            const status = document.getElementById('nodeRefreshStatus');
+            try {
+                const response = await fetch('{{ url_for("api_nodes") }}');
+                const data = await response.json();
+                if (!response.ok || !data.available) {
+                    throw new Error(data.error || 'Metadata server is unavailable.');
+                }
+                renderNodes(data.nodes);
+                document.getElementById('onlineNodes').textContent =
+                    String(data.nodes.filter(node => node.online).length);
+                document.getElementById('totalNodes').textContent = String(data.nodes.length);
+                const cluster = document.getElementById('clusterStatus');
+                const liveNodes = data.nodes.filter(node => node.online).length;
+                cluster.textContent = liveNodes === 0 ? 'Unavailable'
+                    : liveNodes < data.nodes.length ? 'Degraded' : 'Healthy';
+                cluster.className = liveNodes === 0 ? 'unavailable'
+                    : liveNodes < data.nodes.length ? 'degraded' : 'healthy';
+                status.textContent = 'Live status · refreshed just now';
+            } catch (error) {
+                status.textContent = `Live node status unavailable: ${error.message}`;
+                document.getElementById('clusterStatus').textContent = 'Unavailable';
+                document.getElementById('clusterStatus').className = 'unavailable';
+            }
+        }
+
+        function renderNodes(nodes) {
+            const grid = document.getElementById('nodeStatusGrid');
+            if (!nodes.length) {
+                grid.innerHTML = '<div class="empty-state">No data nodes are registered.</div>';
+                return;
+            }
+            grid.innerHTML = nodes.map(node => `
+                <div class="node-card" data-node-id="${escapeHtml(node.id)}">
+                    <div class="node-card-heading">
+                        <span class="node-indicator ${node.online ? 'online' : 'offline'}"></span>
+                        <h3>${escapeHtml(node.id)}</h3>
+                    </div>
+                    <p class="muted-text">${escapeHtml(node.host)}:${escapeHtml(node.port)}</p>
+                    <span class="status-pill ${node.online ? 'status-online' : 'status-offline'}">${node.online ? 'Online' : 'Offline'}</span>
+                </div>`).join('');
+        }
+
+        async function refreshFiles() {
+            const status = document.getElementById('placementRefreshStatus');
+            try {
+                const response = await fetch('{{ url_for("api_files") }}');
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Could not refresh chunk locations.');
+                }
+                document.getElementById('totalFiles').textContent = String(data.files.length);
+                renderFiles(data.files);
+                renderChunkRows(data.chunk_rows);
+                status.textContent = 'Replica locations · refreshed just now';
+            } catch (error) {
+                status.textContent = `Chunk locations could not be refreshed: ${error.message}`;
+            }
+        }
+
+        function renderFiles(files) {
+            const grid = document.getElementById('storedFilesGrid');
+            if (!files.length) {
+                grid.innerHTML = '<div class="empty-state">No uploaded files yet.</div>';
+                return;
+            }
+            grid.innerHTML = files.map(file => `
+                <article class="stored-file-card" data-file-id="${escapeHtml(file.file_id)}">
+                    <div class="feature-icon">▤</div>
+                    <div class="file-card-title">
+                        <h3 title="${escapeHtml(file.filename)}">${escapeHtml(file.filename)}</h3>
+                        <span class="file-status">Stored</span>
+                    </div>
+                    <p class="file-size">${formatBytes(file.size)}</p>
+                    <div class="file-card-meta">
+                        <span>${file.chunk_count} chunks</span>
+                        <span title="${escapeHtml(file.file_id)}">ID ${escapeHtml(file.file_id.slice(0, 10))}…</span>
+                    </div>
+                    <p class="file-date">Uploaded ${escapeHtml(file.created_at)}</p>
+                    <a class="feature-btn secondary-btn download-action" href="/download/${encodeURIComponent(file.file_id)}" data-file-id="${escapeHtml(file.file_id)}" data-filename="${escapeHtml(file.filename)}">Download</a>
+                </article>`).join('');
+            bindDownloadActions();
+        }
+
+        function renderChunkRows(rows) {
+            const body = document.getElementById('chunkPlacementBody');
+            if (!rows.length) {
+                body.innerHTML = '<tr><td class="empty-table" colspan="5">Chunk locations will appear here after a file is uploaded.</td></tr>';
+                return;
+            }
+            body.innerHTML = rows.map(row => `
+                <tr>
+                    <td>${escapeHtml(row.filename)}</td>
+                    <td>${escapeHtml(row.chunk_index)}</td>
+                    <td class="chunk-id-cell">${escapeHtml(row.chunk_id)}</td>
+                    <td>${escapeHtml(row.node_id || '—')}${row.endpoint ? `<small>${escapeHtml(row.endpoint)}</small>` : ''}</td>
+                    <td><span class="status-pill ${row.online ? 'status-online' : 'status-offline'}">${escapeHtml(row.status)}</span></td>
+                </tr>`).join('');
+        }
+
+        function escapeHtml(value) {
+            return String(value).replace(/[&<>"']/g, character => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[character]);
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes) return '0 bytes';
+            const units = ['bytes', 'KB', 'MB', 'GB'];
+            const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+            return `${(bytes / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`;
+        }
+
+        function bindDownloadActions() {
+            document.querySelectorAll('.download-action').forEach(function (link) {
+                link.addEventListener('click', async function (event) {
+                    event.preventDefault();
+                    const fileId = link.dataset.fileId;
+                    const progressWrap = document.createElement('div');
+                    progressWrap.className = 'progress-wrap download-progress';
+                    progressWrap.innerHTML = '<div class="progress-meta"><span>Downloading</span><strong class="download-percent">0%</strong></div><div class="progress-bar"><span class="download-progress-fill"></span></div>';
+                    link.parentNode.insertBefore(progressWrap, link.nextSibling);
+
+                    try {
+                        const response = await fetch(`/download/${fileId}`);
+                        if (!response.ok) {
+                            throw new Error('download failed');
+                        }
+                        const total = parseInt(response.headers.get('Content-Length') || '0', 10) || 0;
+                        const reader = response.body.getReader();
+                        const chunks = [];
+                        let received = 0;
+
+                        while (true) {
+                            const result = await reader.read();
+                            if (result.done) {
+                                break;
+                            }
+                            chunks.push(result.value);
+                            received += result.value.length;
+                            const percent = total ? Math.min(100, Math.round((received / total) * 100)) : 0;
+                            const downloadPercent = progressWrap.querySelector('.download-percent');
+                            const downloadProgressFill = progressWrap.querySelector('.download-progress-fill');
+                            downloadPercent.textContent = `${percent}%`;
+                            downloadProgressFill.style.width = `${percent}%`;
+                        }
+
+                        const blob = new Blob(chunks);
+                        const blobUrl = URL.createObjectURL(blob);
+                        const downloadAnchor = document.createElement('a');
+                        downloadAnchor.href = blobUrl;
+                        downloadAnchor.download = link.dataset.filename;
+                        document.body.appendChild(downloadAnchor);
+                        downloadAnchor.click();
+                        downloadAnchor.remove();
+                        URL.revokeObjectURL(blobUrl);
+                        progressWrap.remove();
+                    } catch (_error) {
+                        progressWrap.remove();
+                        alert('Download failed. Please try again.');
+                    }
+                });
+            });
+        }
+
+        bindDownloadActions();
     </script>
 </body>
 </html>

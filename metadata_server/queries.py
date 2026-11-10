@@ -27,10 +27,21 @@ def initialize(conn):
         "CHUNKS_LOCATION": {"CHUNK_ID", "NODE_ID", "STATUS"},
     }
     incompatible = []
+    table_info = {}
     for table, columns in expected.items():
-        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        table_info[table] = {row["name"]: row for row in rows}
+        existing = set(table_info[table])
         if existing and not columns.issubset(existing):
             incompatible.append(table)
+    file_id = table_info["FILES"].get("FILE_ID")
+    if file_id and (file_id["type"].upper() != "TEXT" or file_id["pk"] != 1):
+        if "FILES" not in incompatible:
+            incompatible.append("FILES")
+    if "FILES" in incompatible:
+        for table in ("CHUNKS", "CHUNKS_LOCATION"):
+            if table_info[table] and table not in incompatible:
+                incompatible.append(table)
     populated = [
         table for table in incompatible
         if conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()

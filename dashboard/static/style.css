@@ -676,3 +676,260 @@ body {
         padding: 25px;
     }
 }
+
+/* ===== Live storage dashboard ===== */
+
+.overview-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 34px;
+}
+
+.overview-card,
+.node-card,
+.stored-file-card {
+    background: #111b30;
+    border: 1px solid #293750;
+    border-radius: 14px;
+}
+
+.overview-card {
+    padding: 20px 22px;
+}
+
+.overview-label,
+.file-date,
+.file-size {
+    display: block;
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+.overview-card strong {
+    display: block;
+    margin-top: 9px;
+    font-size: 25px;
+}
+
+.overview-card strong small {
+    color: #94a3b8;
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.healthy {
+    color: #86efac;
+}
+
+.degraded {
+    color: #fbbf24;
+}
+
+.unavailable {
+    color: #fca5a5;
+}
+
+.node-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+}
+
+.node-card {
+    padding: 18px;
+}
+
+.node-card-heading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.node-card-heading h3 {
+    font-size: 15px;
+    overflow-wrap: anywhere;
+}
+
+.node-indicator {
+    width: 9px;
+    height: 9px;
+    flex: 0 0 9px;
+    border-radius: 50%;
+}
+
+.node-indicator.online {
+    background: #4ade80;
+    box-shadow: 0 0 12px #4ade8080;
+}
+
+.node-indicator.offline {
+    background: #f87171;
+}
+
+.muted-text {
+    color: #94a3b8;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.node-card .status-pill {
+    display: inline-block;
+    margin-top: 13px;
+}
+
+.status-pill {
+    padding: 5px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.status-online {
+    background: #14532d70;
+    color: #86efac;
+}
+
+.status-offline {
+    background: #7f1d1d70;
+    color: #fca5a5;
+}
+
+.stored-files-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 16px;
+}
+
+.stored-file-card {
+    min-width: 0;
+    padding: 20px;
+}
+
+.stored-file-card .feature-icon {
+    width: 42px;
+    height: 42px;
+    margin-bottom: 14px;
+    background: #1e40af60;
+    color: #93c5fd;
+    font-size: 23px;
+}
+
+.file-card-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.file-card-title h3 {
+    min-width: 0;
+    font-size: 15px;
+    overflow-wrap: anywhere;
+}
+
+.file-status {
+    color: #86efac;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.file-size {
+    margin-top: 7px;
+}
+
+.file-card-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 15px 0 8px;
+    color: #cbd5e1;
+    font-size: 11px;
+}
+
+.file-card-meta span:last-child {
+    max-width: 52%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-date {
+    min-height: 18px;
+    margin-bottom: 15px;
+    font-size: 11px;
+}
+
+.stored-file-card .feature-btn {
+    display: block;
+    text-align: center;
+    text-decoration: none;
+}
+
+.log-table-wrap {
+    overflow-x: auto;
+}
+
+.log-table {
+    min-width: 740px;
+}
+
+.log-table td {
+    vertical-align: middle;
+}
+
+.chunk-id-cell {
+    max-width: 250px;
+    overflow-wrap: anywhere;
+    font-family: Consolas, monospace;
+    font-size: 11px !important;
+}
+
+.log-table td small {
+    display: block;
+    margin-top: 4px;
+    color: #94a3b8;
+    font-size: 11px;
+}
+
+.empty-table {
+    padding: 25px !important;
+    color: #94a3b8 !important;
+    text-align: center !important;
+}
+
+.inline-error {
+    margin: -4px 0 14px;
+    color: #fca5a5;
+    font-size: 13px;
+}
+
+.inline-error.hidden {
+    display: none;
+}
+
+.refresh-link {
+    padding: 8px 13px;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    background: #111b30;
+    color: #bfdbfe;
+    cursor: pointer;
+}
+
+.refresh-link:hover {
+    border-color: #60a5fa;
+}
+
+@media (max-width: 750px) {
+    .overview-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
+    .overview-card {
+        padding: 15px 18px;
+    }
+}

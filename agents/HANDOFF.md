@@ -55,3 +55,27 @@
 - Tests added: None.
 - Open problems: None.
 - What the next agent must know: Use the local metadata server + three-node startup sequence from the README before running the CLI or demo script; generated chunk files/database artifacts are recreated automatically when needed.
+
+## 2026-11-10 — Dashboard download filename
+- What changed: Fixed browser downloads to use the uploaded filename instead of the hardcoded `download.bin`.
+- Files touched: `dashboard/templates/index.html`, `tests/test_dashboard.py`, `agents/HANDOFF.md`.
+- New or changed message types: None.
+- Tests added: Dashboard regression test verifies the rendered filename, browser download assignment, and response attachment name.
+- Open problems: None.
+- What the next agent must know: The dashboard stores the sanitized upload filename in its local SQLite file log and includes it on each download link.
+
+## 2026-11-10 — Live dashboard and transfer progress
+- What changed: Added live node and replica-placement refresh, a clearer uploaded-file library, an all-replicas chunk-to-node table, and asynchronous uploads with end-to-end progress.
+- Files touched: `dashboard/app.py`, `dashboard/templates/index.html`, `dashboard/static/style.css`, `client/upload.py`, `tests/test_dashboard.py`, `agents/HANDOFF.md`.
+- New or changed message types: None. The dashboard reuses `LIST_NODES`, `GET_LOCATIONS`, and existing upload messages.
+- Tests added: Dashboard tests cover live-node rendering/API, replica table rows, and upload progress updates.
+- Open problems: None.
+- What the next agent must know: `client.upload.upload_file` accepts an optional `(completed_chunks, total_chunks)` callback. Dashboard upload job state is in-process memory and is intended only for the current single-process Flask dashboard.
+
+## 2026-11-10 — Metadata datatype mismatch and stale dashboard entries
+- What changed: Metadata startup now detects a legacy `FILES.FILE_ID INTEGER PRIMARY KEY` schema, rebuilds it when related tables are empty, and refuses to discard populated data. The dashboard file API also skips local file records that no longer exist in metadata instead of failing the whole refresh.
+- Files touched: `metadata_server/queries.py`, `dashboard/app.py`, `tests/test_metadata.py`, `tests/test_dashboard.py`, `agents/HANDOFF.md`.
+- New or changed message types: None.
+- Tests added: Regressions cover safe initialization of an empty legacy schema, successful UUID upload-plan insertion, preservation of populated incompatible metadata, and stale dashboard-file handling.
+- Open problems: Existing metadata servers must be restarted to run the corrected schema initialization.
+- What the next agent must know: The current local `metadata_server/metadata.db` contains no file/chunk rows; restart the metadata server to replace its incompatible empty `FILES` table. Do not delete the database.
