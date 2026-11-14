@@ -4,7 +4,9 @@ import threading
 
 from client.upload import call
 from metadata_server import db, queries
+from metadata_server.lock_manager import LOCKS, LockTimeout
 from shared import constants
+from .node_slots import NodeSlots
 from .worker_pool import WorkerPool
 
 log = logging.getLogger("failure_detector.replicator")
@@ -15,25 +17,30 @@ class Replicator:
                  timeout=5, retry_delay=0.2):
         self.db_path = db_path
         self.timeout, self.retry_delay = timeout, retry_delay
-        self.tasks = queue.Queue()
+        self.tasks = queue.PriorityQueue()   # (priority, sequence, task)
+        self._sequence = 0
         self._lock = threading.Lock()
         self._in_flight = set()
         self._lost_chunks = set()
+        self.slots = NodeSlots(constants.REPLICATIONS_PER_NODE)
         self._last_alive_count = None
-        self._pool = WorkerPool(self.tasks, self._replicate, workers)
+        self._pool = WorkerPool(self.tasks, lambda item: self._replicate(item[2]), workers)
 
     def start(self):
         self._pool.start()
 
-    def enqueue(self, chunk_id, checksum, source, target):
+    def enqueue(self, chunk_id, checksum, source, target, priority=0):
+        """Lower priority number runs first; equal priorities run in FIFO order."""
         with self._lock:
             if chunk_id in self._in_flight:
                 return False
             self._in_flight.add(chunk_id)
-        self.tasks.put({
+            self._sequence += 1
+            sequence = self._sequence
+        self.tasks.put((priority, sequence, {
             "chunk_id": chunk_id, "checksum": checksum,
             "source": source, "target": target,
-        })
+        }))
         return True
 
     def schedule_under_replicated(self):
@@ -52,6 +59,8 @@ class Replicator:
             )
             for chunk in chunks:
                 if not chunk["sources"]:
+                    if queries.has_pending_replica(conn, chunk["chunk_id"]):
+                        continue          # upload still in progress: nothing was lost yet
                     if chunk["chunk_id"] not in self._lost_chunks:
                         log.error("chunk lost: %s has no surviving replica", chunk["chunk_id"])
                         self._lost_chunks.add(chunk["chunk_id"])
@@ -63,6 +72,7 @@ class Replicator:
                 self.enqueue(
                     chunk["chunk_id"], chunk["checksum"],
                     chunk["sources"][0], target,
+                    priority=chunk["stored_count"],   # fewest live copies = most urgent
                 )
 
     def _current_sources(self, chunk_id):
@@ -76,9 +86,23 @@ class Replicator:
 
     def _replicate(self, task):
         chunk_id = task["chunk_id"]
+        try:
+            with LOCKS.holding([f"chunk:{chunk_id}"], timeout=constants.LOCK_TIMEOUT):
+                self._replicate_locked(task)
+        except LockTimeout:
+            log.warning("could not lock chunk %s; the next monitor pass will retry", chunk_id)
+            with self._lock:
+                self._in_flight.discard(chunk_id)
+
+    def _replicate_locked(self, task):
+        chunk_id = task["chunk_id"]
         failed_sources = set()
         stored = False
         try:
+            with db.connection(self.db_path) as conn:
+                if not queries.chunk_exists(conn, chunk_id):
+                    log.info("chunk %s was deleted; skipping replication", chunk_id)
+                    return
             for attempt in range(4):
                 if self._pool.stop_event.is_set():
                     return
@@ -94,14 +118,17 @@ class Replicator:
                     log.error("chunk lost: %s has no surviving replica", chunk_id)
                     return
                 try:
-                    response, _ = call(
-                        source["HOST"], source["PORT"],
-                        {"cmd": "REPLICATE_CHUNK", "chunk_id": chunk_id,
-                         "checksum": task["checksum"],
-                         "target_host": task["target"]["HOST"],
-                         "target_port": task["target"]["PORT"]},
-                        timeout=self.timeout,
-                    )
+                    # A copy occupies a slot on the source AND on the target node.
+                    with self.slots.holding([source["NODE_ID"], task["target"]["NODE_ID"]],
+                                            timeout=constants.LOCK_TIMEOUT):
+                        response, _ = call(
+                            source["HOST"], source["PORT"],
+                            {"cmd": "REPLICATE_CHUNK", "chunk_id": chunk_id,
+                             "checksum": task["checksum"],
+                             "target_host": task["target"]["HOST"],
+                             "target_port": task["target"]["PORT"]},
+                            timeout=self.timeout,
+                        )
                     if response.get("status") != "ok":
                         raise RuntimeError(response.get("error", response.get("message", "replication rejected")))
                     with db.connection(self.db_path) as conn:

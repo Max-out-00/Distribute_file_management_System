@@ -35,3 +35,31 @@ def download_file(file_id, out_path):
     with open(out_path, "wb") as out:
         for chunk in chunks:             # one chunk in memory at a time
             out.write(fetch_chunk(chunk))
+
+def read_range(file_id, offset, length):
+    """Direct (random) access: fetch only the chunks that cover [offset, offset+length).
+
+    Same idea as paging: chunk number = offset // chunk_size, displacement = offset % chunk_size.
+    Problem solved: reading 100 bytes from a 1 GB file no longer downloads the whole file.
+    """
+    if offset < 0 or length < 0:
+        raise ValueError("offset and length must be non-negative")
+    meta_host = getattr(C, "METADATA_HOST", C.HOST)
+    resp, _ = call(meta_host, C.METADATA_PORT, {"type": "GET_LOCATIONS", "file_id": file_id})
+    if resp["status"] != "ok":
+        raise RuntimeError(resp["error"])
+    chunks = sorted(resp["chunks"], key=lambda c: c["chunk_index"])
+    if [c["chunk_index"] for c in chunks] != list(range(len(chunks))):
+        raise RuntimeError("missing chunk indexes, file is incomplete")
+    sizes = [c.get("chunk_size", C.CHUNK_SIZE) for c in chunks]
+    end = min(offset + length, sum(sizes))
+    out, position = bytearray(), 0
+    for chunk, size in zip(chunks, sizes):
+        start, stop = position, position + size
+        if start >= end:
+            break
+        if stop > offset:                       # this chunk overlaps the requested range
+            data = fetch_chunk(chunk)
+            out += data[max(offset - start, 0):min(end, stop) - start]
+        position = stop
+    return bytes(out)

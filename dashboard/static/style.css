@@ -933,3 +933,13 @@ body {
         padding: 15px 18px;
     }
 }
+
+.danger-btn {
+    margin-top: 10px;
+    background: #b91c1c;
+    cursor: pointer;
+}
+
+.danger-btn:hover:not(:disabled) {
+    background: #dc2626;
+}

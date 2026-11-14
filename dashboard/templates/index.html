@@ -125,6 +125,7 @@
                         </div>
                         <p class="file-date">Uploaded {{ file.created_at }}</p>
                         <a class="feature-btn secondary-btn download-action" href="{{ url_for('download', file_id=file.file_id) }}" data-file-id="{{ file.file_id }}" data-filename="{{ file.filename }}">Download</a>
+                        <button type="button" class="feature-btn danger-btn delete-action" data-file-id="{{ file.file_id }}" data-filename="{{ file.filename }}">Delete</button>
                     </article>
                     {% endfor %}
                     {% else %}
@@ -365,8 +366,10 @@
                     </div>
                     <p class="file-date">Uploaded ${escapeHtml(file.created_at)}</p>
                     <a class="feature-btn secondary-btn download-action" href="/download/${encodeURIComponent(file.file_id)}" data-file-id="${escapeHtml(file.file_id)}" data-filename="${escapeHtml(file.filename)}">Download</a>
+                    <button type="button" class="feature-btn danger-btn delete-action" data-file-id="${escapeHtml(file.file_id)}" data-filename="${escapeHtml(file.filename)}">Delete</button>
                 </article>`).join('');
             bindDownloadActions();
+            bindDeleteActions();
         }
 
         function renderChunkRows(rows) {
@@ -450,7 +453,36 @@
             });
         }
 
+        function bindDeleteActions() {
+            document.querySelectorAll('.delete-action').forEach(function (button) {
+                button.addEventListener('click', async function () {
+                    const name = button.dataset.filename;
+                    if (!confirm(`Delete "${name}" permanently?\nAll copies on the data nodes will be removed.`)) {
+                        return;
+                    }
+                    button.disabled = true;
+                    button.textContent = 'Deleting…';
+                    try {
+                        const response = await fetch(`/api/files/${encodeURIComponent(button.dataset.fileId)}`, {method: 'DELETE'});
+                        const result = await response.json();
+                        if (!response.ok) {
+                            throw new Error(result.error || 'Delete failed.');
+                        }
+                        if (result.unreachable_replicas > 0) {
+                            alert(`Deleted. ${result.unreachable_replicas} copy(ies) are on offline nodes and will be removed when those nodes restart.`);
+                        }
+                        await refreshDashboard();
+                    } catch (error) {
+                        button.disabled = false;
+                        button.textContent = 'Delete';
+                        alert(`Delete failed: ${error.message}`);
+                    }
+                });
+            });
+        }
+
         bindDownloadActions();
+        bindDeleteActions();
     </script>
 </body>
 </html>

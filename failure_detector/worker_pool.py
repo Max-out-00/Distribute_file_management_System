@@ -7,7 +7,8 @@ log = logging.getLogger("failure_detector.workers")
 
 
 class WorkerPool:
-    def __init__(self, work_queue, handler, workers=3):
+    def __init__(self, work_queue, handler, workers=3, name="replica-worker"):
+        self.name = name
         self.work_queue = work_queue
         self.handler = handler
         self.workers = workers
@@ -17,7 +18,7 @@ class WorkerPool:
     def start(self):
         for index in range(self.workers):
             thread = threading.Thread(
-                target=self._work, name=f"replica-worker-{index + 1}", daemon=True
+                target=self._work, name=f"{self.name}-{index + 1}", daemon=True
             )
             thread.start()
             self.threads.append(thread)
@@ -32,7 +33,7 @@ class WorkerPool:
                 if task is not None:
                     self.handler(task)
             except Exception:
-                log.exception("replication worker failed while processing task")
+                log.exception("%s worker failed while processing task", self.name)
             finally:
                 self.work_queue.task_done()
 

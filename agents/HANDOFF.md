@@ -79,3 +79,23 @@
 - Tests added: Regressions cover safe initialization of an empty legacy schema, successful UUID upload-plan insertion, preservation of populated incompatible metadata, and stale dashboard-file handling.
 - Open problems: Existing metadata servers must be restarted to run the corrected schema initialization.
 - What the next agent must know: The current local `metadata_server/metadata.db` contains no file/chunk rows; restart the metadata server to replace its incompatible empty `FILES` table. Do not delete the database.
+
+
+## OS-algorithms extension
+- shared/constants.py: added PLACEMENT_POLICY (env, default round_robin), REQUEST_WORKERS, REQUEST_QUEUE_SIZE, LOCK_TIMEOUT.
+- metadata_server/placement.py: RoundRobinPlacement / MostFreePlacement; create_upload_plan now tracks free bytes inside a plan.
+- metadata_server/server.py: bounded FIFO queue + fixed worker pool instead of thread-per-connection; full queue => "server busy".
+- metadata_server/lock_manager.py: named locks, ordered acquisition (prevention) and wait-for-graph detection; used by DELETE_FILE and the replicator.
+- failure_detector/replicator.py: PriorityQueue (fewest live copies first, FIFO tie-break); takes a chunk lock per replication.
+- DELETE_FILE implemented (handlers.py, queries.delete_file, client/delete.py, `cli delete`). Still no orphan GC, no FILES.STATUS.
+- tests/test_scheduling.py, tests/test_delete.py, scripts/os_demo.py added.
+
+## v4: OS features integrated into the real flows
+- data_node/node_server.py: bounded worker pool + 'node busy' reply, disk reserve (MIN_FREE_BYTES), STATS command.
+- data_node/init.py: dirlock (data_node/dirlock.py), storage.recover() for *.tmp, signal handlers, graceful leave.
+- data_node/heartbeat.py + metadata handlers/queries: LEAVE_NODE, REGISTER_NODE reconcile (orphans, removed_replicas).
+- data_node/cache.py (LRU/FIFO/Clock) used by ChunkStorage.read_chunk; invalidated on write/delete.
+- failure_detector/node_slots.py: per-node replication slots; replicator no longer reports in-progress uploads as lost.
+- client/pipeline.py (--parallel), client/download.read_range (read), scripts/cluster.py (kill-node = crash, stop-node = graceful).
+- Known gaps: no FILES.STATUS, no checksum scrubber, no directories, no access control, upload/download take no locks.
+- Dashboard: DELETE /api/files/<file_id> in dashboard/app.py, Delete button in dashboard/templates/index.html (server-rendered card and renderFiles), .danger-btn in style.css, tests in tests/test_dashboard.py.

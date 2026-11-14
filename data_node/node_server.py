@@ -10,12 +10,16 @@ Commands handled:
     HAS_CHUNK        {chunk_id}                             -> {status, exists}
     REPLICATE_CHUNK  {chunk_id, checksum, target_host, target_port} -> {status}
                      (sent by metadata server / failure detector to a surviving replica holder)
+    STATS                                                   -> {status, chunks, used_bytes, cache}
     PING                                                    -> {status}
 """
 import logging
+import queue
 import socket
 import threading
 
+from failure_detector.worker_pool import WorkerPool
+from shared import constants
 from shared.message import recv_msg, send_msg
 
 log = logging.getLogger("data_node.server")
@@ -31,10 +35,17 @@ def request(host, port, header, payload=b"", timeout=10):
 
 # ---------- server ----------
 class DataNodeServer:
-    def __init__(self, host, port, storage):
+    def __init__(self, host, port, storage, workers=constants.NODE_WORKERS,
+                 max_pending=constants.NODE_QUEUE_SIZE):
         self.host, self.port, self.storage = host, port, storage
         self._sock = None
         self._running = False
+        # Bounded FIFO of accepted connections drained by a fixed worker pool (instead of one
+        # new thread per connection): thread count and memory stay bounded under load.
+        self._requests = queue.Queue(maxsize=max_pending)
+        self._pool = WorkerPool(self._requests, lambda item: self._handle(*item), workers,
+                                name="node-worker")
+        self.rejected = 0
 
     def start(self):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -44,13 +55,16 @@ class DataNodeServer:
         self._sock.settimeout(0.2)
         self.port = self._sock.getsockname()[1]
         self._running = True
+        self._pool.start()
         log.info("data node listening on %s:%d", self.host, self.port)
         threading.Thread(target=self._accept_loop, daemon=True).start()
 
     def stop(self):
+        """Stop accepting, then let in-flight requests finish (graceful drain)."""
         self._running = False
         if self._sock:
             self._sock.close()
+        self._pool.stop()
 
     def _accept_loop(self):
         while self._running:
@@ -60,7 +74,21 @@ class DataNodeServer:
                 continue
             except OSError:
                 break
-            threading.Thread(target=self._handle, args=(conn, addr), daemon=True).start()
+            try:
+                self._requests.put_nowait((conn, addr))
+            except queue.Full:
+                self.rejected += 1
+                self._reject(conn)
+
+    def _reject(self, conn):
+        try:
+            conn.settimeout(1)
+            send_msg(conn, {"status": "error", "error": "node busy, retry later",
+                            "message": "node busy, retry later"})
+        except OSError:
+            pass
+        finally:
+            conn.close()
 
     def _handle(self, conn, addr):
         conn.settimeout(30)
@@ -98,6 +126,10 @@ class DataNodeServer:
                 raise ValueError("checksum is required")
             if type(h.get("size")) is not int or h["size"] != len(payload):
                 raise ValueError("payload size is missing or does not match")
+            if self.storage.free_space() - len(payload) < constants.MIN_FREE_BYTES:
+                send_msg(conn, {"status": "error", "error": "insufficient disk space",
+                                "message": "insufficient disk space"})
+                return
             if self.storage.checksum(payload) != expected:
                 send_msg(conn, {"status": "error", "error": "checksum mismatch",
                                 "message": "checksum mismatch"})
@@ -120,6 +152,11 @@ class DataNodeServer:
 
         elif cmd == "HAS_CHUNK":
             send_msg(conn, {"status": "ok", "exists": self.storage.has_chunk(cid)})
+
+        elif cmd == "STATS":
+            send_msg(conn, {"status": "ok", "chunks": self.storage.chunk_count(),
+                            "used_bytes": self.storage.used_bytes(),
+                            "cache": self.storage.cache.stats()})
 
         elif cmd == "REPLICATE_CHUNK":
             expected = h.get("checksum")

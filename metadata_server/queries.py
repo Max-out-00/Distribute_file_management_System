@@ -1,4 +1,5 @@
 from shared import constants
+from . import placement
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS NODES (
@@ -164,11 +165,17 @@ def remove_pending_replica(conn, chunk_id, node_id):
     conn.execute(sql, (chunk_id, node_id))
 
 
-def create_upload_plan(conn, file_id, file_name, size, chunks, now, replica_count):
+def alive_nodes(conn):
+    sql = "SELECT NODE_ID, HOST, PORT, FREE_BYTES FROM NODES WHERE STATUS='ALIVE' ORDER BY NODE_ID"
+    return [dict(row) for row in conn.execute(sql)]
+
+
+def create_upload_plan(conn, file_id, file_name, size, chunks, now, replica_count,
+                       policy=None):
+    policy = policy or placement.get_policy()
     replica_count = max(int(replica_count), constants.REPLICATION_FACTOR)
-    alive = conn.execute(
-        "SELECT COUNT(*) FROM NODES WHERE STATUS='ALIVE'"
-    ).fetchone()[0]
+    pool = alive_nodes(conn)
+    alive = len(pool)
     if alive == 0:
         raise ValueError("no alive data nodes")
     conn.execute(
@@ -182,12 +189,13 @@ def create_upload_plan(conn, file_id, file_name, size, chunks, now, replica_coun
                VALUES (?, ?, ?, ?, ?)""",
             (item["chunk_id"], file_id, item["chunk_index"], item["chunk_size"], item["checksum"]),
         )
+        eligible = [n for n in pool if n["FREE_BYTES"] >= item["chunk_size"]]
+        if not eligible:
+            raise ValueError("no alive data node has enough free space")
         targets = []
-        for _ in range(min(replica_count, alive)):
-            node = pick_target_node(conn, item["chunk_id"])
-            if node is None:
-                break
+        for node in policy.choose(eligible, min(replica_count, len(eligible))):
             mark_replica(conn, item["chunk_id"], node["NODE_ID"], "PENDING")
+            node["FREE_BYTES"] -= item["chunk_size"]   # track space used inside this plan
             targets.append({"node_id": node["NODE_ID"], "host": node["HOST"],
                             "port": node["PORT"]})
         planned.append({**item, "nodes": targets})
@@ -206,7 +214,7 @@ def get_file_locations(conn, file_id):
     if not conn.execute("SELECT 1 FROM FILES WHERE FILE_ID=?", (file_id,)).fetchone():
         return None
     rows = conn.execute(
-        """SELECT c.CHUNK_ID, c.CHUNK_INDEX, c.CHECKSUM, n.NODE_ID, n.HOST, n.PORT,
+        """SELECT c.CHUNK_ID, c.CHUNK_INDEX, c.CHUNK_SIZE, c.CHECKSUM, n.NODE_ID, n.HOST, n.PORT,
                   n.STATUS AS NODE_STATUS, l.STATUS AS LOCATION_STATUS
            FROM CHUNKS c LEFT JOIN CHUNKS_LOCATION l ON l.CHUNK_ID=c.CHUNK_ID
            LEFT JOIN NODES n ON n.NODE_ID=l.NODE_ID
@@ -216,10 +224,71 @@ def get_file_locations(conn, file_id):
     for row in rows:
         item = chunks.setdefault(row["CHUNK_ID"], {
             "chunk_id": row["CHUNK_ID"], "chunk_index": row["CHUNK_INDEX"],
-            "checksum": row["CHECKSUM"], "nodes": []})
+            "chunk_size": row["CHUNK_SIZE"], "checksum": row["CHECKSUM"], "nodes": []})
         if row["NODE_ID"] and row["LOCATION_STATUS"] == "STORED":
             item["nodes"].append({
                 "node_id": row["NODE_ID"], "host": row["HOST"], "port": row["PORT"],
                 "alive": row["NODE_STATUS"] == "ALIVE",
             })
     return list(chunks.values())
+
+def reconcile_node(conn, node_id, reported):
+    """Compare what a node says it stores with what the database believes.
+
+    orphans: files on the node with no location row for it (e.g. file deleted while the node
+             was down) - the node may delete them after a grace period.
+    missing: STORED rows whose file is gone from the node - dropped so recovery re-replicates.
+    """
+    reported = set(reported)
+    rows = conn.execute("SELECT CHUNK_ID, STATUS FROM CHUNKS_LOCATION WHERE NODE_ID=?",
+                        (node_id,)).fetchall()
+    known = {row["CHUNK_ID"]: row["STATUS"] for row in rows}
+    orphans = sorted(c for c in reported if c not in known)
+    missing = sorted(c for c, status in known.items() if status == "STORED" and c not in reported)
+    for chunk_id in missing:
+        conn.execute("DELETE FROM CHUNKS_LOCATION WHERE CHUNK_ID=? AND NODE_ID=?", (chunk_id, node_id))
+    return orphans, missing
+
+
+def leave_node(conn, node_id):
+    """A node announced a clean shutdown: mark it DEAD at once. True if it was ALIVE."""
+    cursor = conn.execute("UPDATE NODES SET STATUS='DEAD' WHERE NODE_ID=? AND STATUS='ALIVE'", (node_id,))
+    return cursor.rowcount > 0
+
+
+def has_pending_replica(conn, chunk_id):
+    row = conn.execute("SELECT 1 FROM CHUNKS_LOCATION WHERE CHUNK_ID=? AND STATUS='PENDING'", (chunk_id,))
+    return row.fetchone() is not None
+
+
+def chunk_exists(conn, chunk_id):
+    return conn.execute("SELECT 1 FROM CHUNKS WHERE CHUNK_ID=?", (chunk_id,)).fetchone() is not None
+
+
+def chunk_ids_for_file(conn, file_id):
+    """Chunk IDs of a file, or None if the file is unknown."""
+    if not conn.execute("SELECT 1 FROM FILES WHERE FILE_ID=?", (file_id,)).fetchone():
+        return None
+    rows = conn.execute("SELECT CHUNK_ID FROM CHUNKS WHERE FILE_ID=?", (file_id,)).fetchall()
+    return [row["CHUNK_ID"] for row in rows]
+
+
+def delete_file(conn, file_id):
+    """Remove a file's metadata (children first, because foreign keys are ON).
+
+    Returns the replica endpoints [(chunk_id, host, port)] so the caller can delete
+    the bytes after the transaction commits, or None if the file does not exist.
+    """
+    if not conn.execute("SELECT 1 FROM FILES WHERE FILE_ID=?", (file_id,)).fetchone():
+        return None
+    replicas = [
+        (r["CHUNK_ID"], r["HOST"], r["PORT"]) for r in conn.execute(
+            """SELECT l.CHUNK_ID, n.HOST, n.PORT FROM CHUNKS c
+               JOIN CHUNKS_LOCATION l ON l.CHUNK_ID=c.CHUNK_ID
+               JOIN NODES n ON n.NODE_ID=l.NODE_ID WHERE c.FILE_ID=?""", (file_id,))
+    ]
+    conn.execute("DELETE FROM CHUNKS_LOCATION WHERE CHUNK_ID IN "
+                 "(SELECT CHUNK_ID FROM CHUNKS WHERE FILE_ID=?)", (file_id,))
+    conn.execute("DELETE FROM CHUNKS WHERE FILE_ID=?", (file_id,))
+    conn.execute("DELETE FROM FILES WHERE FILE_ID=?", (file_id,))
+    return replicas

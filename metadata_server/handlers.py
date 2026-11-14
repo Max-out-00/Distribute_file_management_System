@@ -3,8 +3,10 @@ import re
 import time
 import uuid
 
+from client.upload import call
 from shared import constants
 from . import db, queries
+from .lock_manager import LOCKS
 
 log = logging.getLogger("metadata_server.handlers")
 CHUNK_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -20,10 +22,39 @@ def _required(data, key, kind):
     return value
 
 
+def _delete_file(message, db_path):
+    file_id = _required(message, "file_id", str)
+    with db.connection(db_path) as conn:
+        chunk_ids = queries.chunk_ids_for_file(conn, file_id)
+    if chunk_ids is None:
+        raise ValueError("file not found")
+    # File lock + every chunk lock, taken in sorted order (deadlock prevention).
+    # Holding the chunk locks makes an in-flight re-replication finish first, so its
+    # new replica is visible to us and no orphan copy is left behind.
+    keys = [f"file:{file_id}"] + [f"chunk:{cid}" for cid in chunk_ids]
+    with LOCKS.holding(keys, timeout=constants.LOCK_TIMEOUT):
+        with db.connection(db_path) as conn:
+            replicas = queries.delete_file(conn, file_id)   # commits on exit
+        if replicas is None:
+            raise ValueError("file not found")
+        unreachable = 0
+        for chunk_id, host, port in replicas:    # metadata is gone; now free the bytes
+            try:
+                reply, _ = call(host, port, {"cmd": "DELETE_CHUNK", "chunk_id": chunk_id},
+                                timeout=3)
+                unreachable += reply.get("status") != "ok"
+            except (OSError, ValueError):
+                unreachable += 1
+    return {"status": "ok", "deleted_chunks": len(chunk_ids),
+            "unreachable_replicas": unreachable}
+
+
 def handle_message(message, db_path):
     message_type = _required(message, "type", str)
     if message_type == "PING":
         return {"status": "ok"}
+    if message_type == "DELETE_FILE":
+        return _delete_file(message, db_path)
 
     with db.connection(db_path) as conn:
         if message_type in ("REGISTER_NODE", "HEARTBEAT"):
@@ -38,6 +69,21 @@ def handle_message(message, db_path):
             )
             if returned:
                 log.info("node %s transitioned DEAD -> ALIVE", node_id)
+            reply = {"status": "ok"}
+            reported = message.get("chunk_ids")
+            if (message_type == "REGISTER_NODE" and isinstance(reported, list)
+                    and all(isinstance(c, str) for c in reported)):
+                orphans, missing = queries.reconcile_node(conn, node_id, reported)
+                if missing:
+                    log.warning("node %s lost %d replica(s); dropped them so they are re-replicated",
+                                node_id, len(missing))
+                reply.update(orphans=orphans, removed_replicas=len(missing))
+            return reply
+
+        if message_type == "LEAVE_NODE":
+            node_id = _required(message, "node_id", str)
+            if queries.leave_node(conn, node_id):
+                log.info("node %s left gracefully", node_id)
             return {"status": "ok"}
 
         if message_type == "LIST_NODES":

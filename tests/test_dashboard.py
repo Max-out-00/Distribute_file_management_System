@@ -245,3 +245,61 @@ def test_download_uses_uploaded_filename(tmp_path, monkeypatch):
     assert response.headers["Content-Disposition"] == (
         'attachment; filename=original-report.txt'
     )
+
+
+def _seed_file(database):
+    import sqlite3
+    with sqlite3.connect(database) as conn:
+        conn.execute("INSERT INTO files (file_id, filename, size, chunks, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+                     ("f1", "report.txt", 5, "[]"))
+
+
+def test_delete_removes_file_from_cluster_and_dashboard_list(monkeypatch, tmp_path):
+    database = tmp_path / "dashboard_files.db"
+    monkeypatch.setattr(dashboard, "DB_PATH", database)
+    dashboard.init_db()
+    _seed_file(database)
+    calls = []
+    monkeypatch.setattr(dashboard, "delete_file",
+                        lambda file_id: calls.append(file_id) or {"deleted_chunks": 3, "unreachable_replicas": 1})
+    response = dashboard.app.test_client().delete("/api/files/f1")
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "ok", "deleted_chunks": 3, "unreachable_replicas": 1}
+    assert calls == ["f1"] and dashboard._files_from_db() == []
+
+
+def test_delete_of_file_already_gone_from_metadata_cleans_the_list(monkeypatch, tmp_path):
+    database = tmp_path / "dashboard_files.db"
+    monkeypatch.setattr(dashboard, "DB_PATH", database)
+    dashboard.init_db()
+    _seed_file(database)
+
+    def gone(file_id):
+        raise RuntimeError("file not found")
+    monkeypatch.setattr(dashboard, "delete_file", gone)
+    assert dashboard.app.test_client().delete("/api/files/f1").status_code == 200
+    assert dashboard._files_from_db() == []
+
+
+def test_failed_delete_keeps_the_file_listed(monkeypatch, tmp_path):
+    database = tmp_path / "dashboard_files.db"
+    monkeypatch.setattr(dashboard, "DB_PATH", database)
+    dashboard.init_db()
+    _seed_file(database)
+
+    def broken(file_id):
+        raise OSError("connection refused")
+    monkeypatch.setattr(dashboard, "delete_file", broken)
+    response = dashboard.app.test_client().delete("/api/files/f1")
+    assert response.status_code == 503 and "unreachable" in response.get_json()["error"]
+    assert len(dashboard._files_from_db()) == 1
+
+
+def test_file_card_has_a_delete_button(monkeypatch, tmp_path):
+    database = tmp_path / "dashboard_files.db"
+    monkeypatch.setattr(dashboard, "DB_PATH", database)
+    dashboard.init_db()
+    _seed_file(database)
+    monkeypatch.setattr(dashboard, "_nodes_from_metadata", lambda: ([], None))
+    html = dashboard.app.test_client().get("/").get_data(as_text=True)
+    assert 'class="feature-btn danger-btn delete-action"' in html and 'data-file-id="f1"' in html

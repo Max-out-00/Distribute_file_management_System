@@ -14,6 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from client.delete import delete_file
 from client.download import download_file
 from client.upload import call, upload_file
 from shared import constants
@@ -313,6 +314,27 @@ def download(file_id):
     except Exception as exc:
         flash(f'Download failed: {exc}', 'error')
         return redirect(url_for('home'))
+
+
+@app.route('/api/files/<file_id>', methods=['DELETE'])
+def api_delete_file(file_id):
+    """Delete a file everywhere: metadata, every replica on the data nodes, and the dashboard list."""
+    resolve_metadata()
+    try:
+        reply = delete_file(file_id)
+    except RuntimeError as exc:
+        if 'file not found' not in str(exc):
+            return jsonify({'error': str(exc)}), 502
+        reply = {'deleted_chunks': 0, 'unreachable_replicas': 0}   # already gone: just clean the list
+    except (OSError, ValueError) as exc:
+        return jsonify({'error': f'Metadata server unreachable: {exc}'}), 503
+    with get_db() as conn:
+        conn.execute('DELETE FROM files WHERE file_id = ?', (file_id,))
+    return jsonify({
+        'status': 'ok',
+        'deleted_chunks': reply.get('deleted_chunks', 0),
+        'unreachable_replicas': reply.get('unreachable_replicas', 0),
+    })
 
 
 @app.route('/api/files')

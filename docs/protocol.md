@@ -68,3 +68,34 @@ The following requests use the `cmd` field.
 - Requests: `{"cmd":"DELETE_CHUNK","chunk_id":"file_0"}` or `{"cmd":"HAS_CHUNK","chunk_id":"file_0"}`
 - Replies: `{"status":"ok","deleted":true}` or `{"status":"ok","exists":true}`.
 - Errors: invalid chunk ID or storage error.
+
+## DELETE_FILE (metadata server)
+
+Request: `{"type": "DELETE_FILE", "file_id": "<id>"}`
+Reply: `{"status": "ok", "deleted_chunks": N, "unreachable_replicas": M}` or an error (`file not found`, lock timeout).
+The server locks the file and all its chunks (sorted order), deletes the metadata in one transaction, then sends
+`DELETE_CHUNK` to every node that held a replica. Replicas on unreachable nodes remain as orphans (no garbage collector yet).
+
+## Overload
+
+When the bounded request queue is full the server replies `{"status": "error", "error": "server busy, retry later"}`.
+
+
+## STATS (data node)
+Request: `{"cmd": "STATS"}`. Reply: `{"status": "ok", "chunks": N, "used_bytes": B, "cache": {policy, capacity, cached, hits, misses, evictions, hit_ratio}}`.
+
+## GET_LOCATIONS extra field
+Every chunk entry now also carries `chunk_size` (used by direct-access reads). Older clients ignore it.
+
+## LEAVE_NODE (metadata server)
+`{"type": "LEAVE_NODE", "node_id": "<id>"}` -> `{"status": "ok"}`. Sent by a data node that is shutting down gracefully;
+the node is marked DEAD immediately so re-replication starts without waiting for the heartbeat timeout.
+
+## REGISTER_NODE reply (extended)
+When `chunk_ids` is sent, the reply also carries `orphans` (chunk files the database has no record of for this node;
+the node deletes those older than ORPHAN_GRACE_SECONDS) and `removed_replicas` (STORED rows whose file is gone; they are
+dropped so recovery re-replicates).
+
+## Busy replies
+A data node whose worker pool and queue are full answers `{"status": "error", "error": "node busy, retry later"}`.
+A PUT_CHUNK that would leave less than MIN_FREE_BYTES free is refused with `insufficient disk space`.

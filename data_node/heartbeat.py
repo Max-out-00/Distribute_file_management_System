@@ -2,6 +2,7 @@
 import logging
 import threading
 
+from shared import constants
 from .node_server import request
 
 log = logging.getLogger("data_node.heartbeat")
@@ -28,7 +29,26 @@ class HeartbeatSender:
 
     def _send(self, cmd):
         resp, _ = request(self.meta_host, self.meta_port, self._payload(cmd), timeout=5)
+        if cmd == "REGISTER" and resp.get("status") == "ok":
+            self._collect_orphans(resp)
         return resp.get("status") == "ok"
+
+    def _collect_orphans(self, resp):
+        """The metadata server lists chunk files it has no record of; delete the old ones."""
+        removed = sum(1 for cid in resp.get("orphans") or []
+                      if isinstance(cid, str)
+                      and self.storage.remove_if_older(cid, constants.ORPHAN_GRACE_SECONDS))
+        if removed or resp.get("removed_replicas"):
+            log.info("reconciled with metadata: removed %d orphan chunk(s); metadata dropped %s "
+                     "replica(s) this node no longer has", removed, resp.get("removed_replicas", 0))
+
+    def leave(self):
+        """Tell the metadata server we are shutting down so recovery starts immediately."""
+        try:
+            request(self.meta_host, self.meta_port,
+                    {"type": "LEAVE_NODE", "node_id": self.node_id}, timeout=3)
+        except OSError as e:
+            log.warning("could not announce shutdown: %s", e)
 
     def start(self):
         self._thread = threading.Thread(target=self._run, daemon=True)

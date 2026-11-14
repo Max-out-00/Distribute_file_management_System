@@ -141,3 +141,18 @@ hashes. To stop the stack:
 ```sh
 docker compose down
 ```
+
+## Scheduling, synchronization and deadlock handling
+Round-robin chunk placement (`PLACEMENT_POLICY=most_free` restores the old rule), a bounded FIFO request queue with a
+worker pool, priority-ordered re-replication, and a lock manager with deadlock prevention and detection.
+Run `python scripts/os_demo.py all` to see each one; `python -m dfs delete` style usage: `python -m client.cli delete <file_id>`.
+
+## OS features built into the real flows (v4)
+Data nodes use a bounded worker pool (busy replies when full), a storage-directory file lock, a disk-space
+reserve and crash recovery at startup. SIGTERM/Ctrl+C triggers a graceful shutdown: the node announces
+LEAVE_NODE so recovery starts at once, while a crash (SIGKILL) is only noticed after the heartbeat timeout.
+On every (re)start a node and the metadata server reconcile: orphan chunk files are garbage-collected and
+replicas that vanished from disk are dropped so they are re-replicated. Nodes cache hot chunks (LRU, FIFO or
+Clock), the client can upload with several threads (`--parallel N`) and read a byte range (`read`), and
+re-replication is limited by per-node slots. `python scripts/cluster.py start` runs the whole cluster as
+real OS processes. Details: `docs/V4_CHANGES.md`.

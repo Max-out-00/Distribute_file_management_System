@@ -11,4 +11,4 @@ __pycache__/
 
 # Runtime data
 *.db
-data_node/storage/
+data_node/storage/run/

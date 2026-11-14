@@ -7,9 +7,12 @@ Run from the project root, e.g.:
 """
 import argparse
 import logging
-import time
+import signal
+import sys
+import threading
 
 from shared import constants
+from . import dirlock
 from .heartbeat import HeartbeatSender
 from .node_server import DataNodeServer
 from .storage import ChunkStorage
@@ -33,19 +36,34 @@ def main():
                         format=f"%(asctime)s [{a.node_id}] %(name)s: %(message)s")
 
     advertise_host = a.advertise_host or a.legacy_host or constants.HOST
-    storage = ChunkStorage(a.storage_dir or f"data_node/chunks/{a.node_id}")
+    storage_dir = a.storage_dir or f"data_node/chunks/{a.node_id}"
+    try:
+        lock = dirlock.acquire(storage_dir)          # one process per storage directory
+    except RuntimeError as error:
+        sys.exit(f"Error: {error}")
+    storage = ChunkStorage(storage_dir)
+    leftovers = storage.recover()                    # crash recovery: drop half-written files
+    if leftovers:
+        logging.getLogger("data_node").warning("removed %d incomplete write(s) left by a crash", leftovers)
     server = DataNodeServer(a.bind_host, a.port, storage)
     heartbeat = HeartbeatSender(a.node_id, advertise_host, a.port, storage,
                                 a.meta_host, a.meta_port, a.heartbeat_interval)
     server.start()
     heartbeat.start()
 
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        heartbeat.stop()
-        server.stop()
+    stop = threading.Event()
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):          # Ctrl+C, kill, Ctrl+Break
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), lambda *_: stop.set())
+    while not stop.wait(0.5):
+        pass
+
+    log = logging.getLogger("data_node")
+    log.info("shutdown signal received: leaving the cluster gracefully")
+    heartbeat.stop()                                 # no more heartbeats (cannot resurrect us)
+    heartbeat.leave()                                # metadata marks us DEAD now, not after 10 s
+    server.stop()                                    # stop accepting, finish in-flight requests
+    lock.close()
 
 
 if __name__ == "__main__":
