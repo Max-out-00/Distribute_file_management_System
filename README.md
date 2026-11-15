@@ -45,7 +45,7 @@ Then open the browser at:
 http://127.0.0.1:8000
 ```
 
-Use the UI to upload files and download stored files. Each chunk is split, distributed across different nodes, and stored with three replicas when enough nodes are available. The dashboard uses the live metadata server and the data nodes directly, shows a green progress bar for uploads/downloads, surfaces node recovery notices when data nodes drop offline, and keeps a simple data log of each uploaded file and its timestamp.
+Use the UI to upload files and download stored files. Chunks are at most 4 MiB by default; clients reduce the per-file chunk size when the live node capacities cannot fit a 4 MiB chunk on the required number of distinct nodes. Each chunk is stored with the configured replication factor (2 by default), and uploads fail rather than silently reducing that factor when capacity is insufficient. The dashboard uses the live metadata server and data nodes directly, shows a green progress bar for uploads/downloads, surfaces node recovery notices when data nodes drop offline, and keeps a simple data log of each uploaded file and its timestamp.
 
 Command-line alternative:
 
@@ -104,6 +104,23 @@ This is a local demonstration of splitting, TCP upload/download, per-chunk
 integrity checks, reassembly, and storage across three node directories. It
 does not demonstrate metadata-based placement, automatic replication, or
 failure recovery.
+
+## Demonstrate adaptive capacity and replica repair
+
+Run the isolated integration demonstrations from the repository root:
+
+```powershell
+python -m pytest -q tests/test_integration.py::test_adaptive_chunk_sizes_fit_capacity_and_reconstruct_in_order
+python -m pytest -q tests/test_integration.py::test_corrupt_replica_falls_back_and_is_replicated_again
+```
+
+The first starts four 3 MiB nodes and uploads a 6 MiB file. It verifies two
+3 MiB chunks, two distinct initial replicas per chunk, ordered reconstruction,
+and matching bytes. The second corrupts one stored copy, verifies that download
+falls back to the other checksum-valid replica, and waits for automatic
+re-replication. The dashboard also displays each node's latest reported free
+space and the active replication factor (2 by default); its reference value of
+3 is informational, not the current configuration.
 
 
 To show the evidence while presenting:

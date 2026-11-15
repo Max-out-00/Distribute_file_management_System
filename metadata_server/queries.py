@@ -1,4 +1,5 @@
 from shared import constants
+from . import placement
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS NODES (
@@ -6,7 +7,8 @@ CREATE TABLE IF NOT EXISTS NODES (
  FREE_BYTES INTEGER NOT NULL DEFAULT 0, LAST_HEARTBEAT REAL NOT NULL,
  STATUS TEXT NOT NULL CHECK (STATUS IN ('ALIVE', 'DEAD')));
 CREATE TABLE IF NOT EXISTS FILES (FILE_ID TEXT PRIMARY KEY NOT NULL,
- FILE_NAME TEXT NOT NULL, SIZE INTEGER NOT NULL, CREATED_AT REAL NOT NULL);
+ FILE_NAME TEXT NOT NULL, SIZE INTEGER NOT NULL, CREATED_AT REAL NOT NULL,
+ STATUS TEXT NOT NULL DEFAULT 'COMPLETE' CHECK (STATUS IN ('UPLOADING', 'COMPLETE')));
 CREATE TABLE IF NOT EXISTS CHUNKS (CHUNK_ID TEXT PRIMARY KEY NOT NULL,
  FILE_ID TEXT NOT NULL, CHUNK_INDEX INTEGER NOT NULL, CHUNK_SIZE INTEGER NOT NULL,
  CHECKSUM TEXT NOT NULL, FOREIGN KEY (FILE_ID) REFERENCES FILES(FILE_ID));
@@ -28,8 +30,18 @@ def initialize(conn):
     }
     incompatible = []
     for table, columns in expected.items():
-        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        table_info = {
+            row["name"]: row for row in conn.execute(f"PRAGMA table_info({table})")
+        }
+        existing = set(table_info)
         if existing and not columns.issubset(existing):
+            incompatible.append(table)
+        if (
+            table == "FILES"
+            and "FILE_ID" in table_info
+            and table_info["FILE_ID"]["type"].upper() != "TEXT"
+            and table not in incompatible
+        ):
             incompatible.append(table)
     populated = [
         table for table in incompatible
@@ -43,6 +55,9 @@ def initialize(conn):
         if table in incompatible:
             conn.execute(f"DROP TABLE {table}")
     conn.executescript(SCHEMA_SQL)
+    file_columns = {row["name"] for row in conn.execute("PRAGMA table_info(FILES)")}
+    if "STATUS" not in file_columns:
+        conn.execute("ALTER TABLE FILES ADD COLUMN STATUS TEXT NOT NULL DEFAULT 'COMPLETE'")
 
 
 def configure(conn):
@@ -128,12 +143,14 @@ def get_replication_issues(conn, required=None):
 
 
 def pick_target_node(conn, chunk_id):
+    reserve = int(getattr(constants, "RESERVE_BYTES", 0))
     row = conn.execute(
         """SELECT n.NODE_ID, n.HOST, n.PORT, n.FREE_BYTES FROM NODES n
-           WHERE n.STATUS='ALIVE' AND NOT EXISTS (
+           JOIN CHUNKS c ON c.CHUNK_ID=?
+           WHERE n.STATUS='ALIVE' AND n.FREE_BYTES >= c.CHUNK_SIZE + ? AND NOT EXISTS (
              SELECT 1 FROM CHUNKS_LOCATION l
              WHERE l.CHUNK_ID=? AND l.NODE_ID=n.NODE_ID)
-           ORDER BY n.FREE_BYTES DESC, n.NODE_ID LIMIT 1""", (chunk_id,)
+           ORDER BY n.FREE_BYTES DESC, n.NODE_ID LIMIT 1""", (chunk_id, reserve, chunk_id)
     ).fetchone()
     return dict(row) if row else None
 
@@ -148,54 +165,102 @@ def mark_replica(conn, chunk_id, node_id, status):
     )
 
 
+def report_corrupt_replica(conn, chunk_id, node_id):
+    cursor = conn.execute(
+        """DELETE FROM CHUNKS_LOCATION
+           WHERE CHUNK_ID=? AND NODE_ID=? AND STATUS='STORED'""",
+        (chunk_id, node_id),
+    )
+    return cursor.rowcount == 1
+
+
 def remove_pending_replica(conn, chunk_id, node_id):
     sql = "DELETE FROM CHUNKS_LOCATION WHERE CHUNK_ID=? AND NODE_ID=? AND STATUS='PENDING'"
     conn.execute(sql, (chunk_id, node_id))
 
 
-def create_upload_plan(conn, file_id, file_name, size, chunks, now, replica_count):
-    replica_count = max(int(replica_count), constants.REPLICATION_FACTOR)
-    alive = conn.execute(
-        "SELECT COUNT(*) FROM NODES WHERE STATUS='ALIVE'"
-    ).fetchone()[0]
-    if alive == 0:
-        raise ValueError("no alive data nodes")
-    conn.execute(
-        "INSERT INTO FILES (FILE_ID, FILE_NAME, SIZE, CREATED_AT) VALUES (?, ?, ?, ?)",
-        (file_id, file_name, size, now),
-    )
+def alive_nodes(conn):
+    sql = "SELECT NODE_ID, HOST, PORT, FREE_BYTES FROM NODES WHERE STATUS='ALIVE' ORDER BY NODE_ID"
+    return [dict(row) for row in conn.execute(sql)]
+
+
+def create_upload_plan(conn, file_id, file_name, size, chunks, now, replica_count,
+                       policy=None):
+    policy = policy or placement.get_policy()
+    required = int(constants.REPLICATION_FACTOR)
+    replica_count = required
+    reserve = int(getattr(constants, "RESERVE_BYTES", 0))
+    pool = alive_nodes(conn)
+    alive = len(pool)
+    if chunks and alive < required:
+        raise ValueError(f"only {alive} ALIVE nodes available; {required} replicas required")
+    for node in pool:
+        node["REMAINING_BYTES"] = int(node["FREE_BYTES"])
     planned = []
-    for item in chunks:
+    try:
         conn.execute(
-            """INSERT INTO CHUNKS (CHUNK_ID, FILE_ID, CHUNK_INDEX, CHUNK_SIZE, CHECKSUM)
-               VALUES (?, ?, ?, ?, ?)""",
-            (item["chunk_id"], file_id, item["chunk_index"], item["chunk_size"], item["checksum"]),
+            "INSERT INTO FILES (FILE_ID, FILE_NAME, SIZE, CREATED_AT, STATUS) VALUES (?, ?, ?, ?, ?)",
+            (file_id, file_name, size, now, "UPLOADING" if chunks else "COMPLETE"),
         )
-        targets = []
-        for _ in range(min(replica_count, alive)):
-            node = pick_target_node(conn, item["chunk_id"])
-            if node is None:
-                break
-            mark_replica(conn, item["chunk_id"], node["NODE_ID"], "PENDING")
-            targets.append({"node_id": node["NODE_ID"], "host": node["HOST"],
-                            "port": node["PORT"]})
-        planned.append({**item, "nodes": targets})
+        for item in chunks:
+            chunk_size = int(item["chunk_size"])
+            eligible = [n for n in pool if n["REMAINING_BYTES"] >= chunk_size + reserve]
+            if len(eligible) < required:
+                raise ValueError(
+                    f"chunk {item['chunk_id']} requires {required} replicas of {chunk_size} bytes "
+                    f"plus {reserve}-byte reserve; only {len(eligible)} eligible ALIVE nodes"
+                )
+            targets = policy.choose(eligible, required)
+            if len(targets) != required or len({n["NODE_ID"] for n in targets}) != required:
+                raise ValueError(f"placement policy did not select {required} distinct nodes for chunk {item['chunk_id']}")
+            conn.execute(
+                """INSERT INTO CHUNKS (CHUNK_ID, FILE_ID, CHUNK_INDEX, CHUNK_SIZE, CHECKSUM)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (item["chunk_id"], file_id, item["chunk_index"], chunk_size, item["checksum"]),
+            )
+            for node in targets:
+                mark_replica(conn, item["chunk_id"], node["NODE_ID"], "PENDING")
+                node["REMAINING_BYTES"] -= chunk_size
+            planned.append({**item, "nodes": [
+                {"node_id": n["NODE_ID"], "host": n["HOST"], "port": n["PORT"]}
+                for n in targets
+            ]})
+    except Exception:
+        conn.execute("DELETE FROM CHUNKS_LOCATION WHERE CHUNK_ID IN (SELECT CHUNK_ID FROM CHUNKS WHERE FILE_ID=?)", (file_id,))
+        conn.execute("DELETE FROM CHUNKS WHERE FILE_ID=?", (file_id,))
+        conn.execute("DELETE FROM FILES WHERE FILE_ID=?", (file_id,))
+        raise
     return planned, alive
 
 
 def confirm_replica(conn, chunk_id, node_id):
     cursor = conn.execute(
         """UPDATE CHUNKS_LOCATION SET STATUS='STORED'
-           WHERE CHUNK_ID=? AND NODE_ID=?""", (chunk_id, node_id)
+           WHERE CHUNK_ID=? AND NODE_ID=? AND STATUS='PENDING'""", (chunk_id, node_id)
     )
-    return cursor.rowcount == 1
+    if cursor.rowcount != 1:
+        return False
+    file_row = conn.execute(
+        "SELECT FILE_ID FROM CHUNKS WHERE CHUNK_ID=?", (chunk_id,)
+    ).fetchone()
+    if file_row:
+        pending = conn.execute(
+            """SELECT 1 FROM CHUNKS c WHERE c.FILE_ID=? AND (
+                 SELECT COUNT(*) FROM CHUNKS_LOCATION l WHERE l.CHUNK_ID=c.CHUNK_ID
+                   AND l.STATUS='STORED') < ? LIMIT 1""",
+            (file_row["FILE_ID"], int(constants.REPLICATION_FACTOR)),
+        ).fetchone()
+        if not pending:
+            conn.execute("UPDATE FILES SET STATUS='COMPLETE' WHERE FILE_ID=?", (file_row["FILE_ID"],))
+    return True
 
 
 def get_file_locations(conn, file_id):
-    if not conn.execute("SELECT 1 FROM FILES WHERE FILE_ID=?", (file_id,)).fetchone():
+    if not conn.execute("SELECT 1 FROM FILES WHERE FILE_ID=? AND STATUS='COMPLETE'", (file_id,)).fetchone():
         return None
     rows = conn.execute(
-        """SELECT c.CHUNK_ID, c.CHUNK_INDEX, c.CHECKSUM, n.NODE_ID, n.HOST, n.PORT,
+        """SELECT c.CHUNK_ID, c.CHUNK_INDEX, c.CHUNK_SIZE, c.CHECKSUM,
+                  n.NODE_ID, n.HOST, n.PORT,
                   n.STATUS AS NODE_STATUS, l.STATUS AS LOCATION_STATUS
            FROM CHUNKS c LEFT JOIN CHUNKS_LOCATION l ON l.CHUNK_ID=c.CHUNK_ID
            LEFT JOIN NODES n ON n.NODE_ID=l.NODE_ID
@@ -205,7 +270,7 @@ def get_file_locations(conn, file_id):
     for row in rows:
         item = chunks.setdefault(row["CHUNK_ID"], {
             "chunk_id": row["CHUNK_ID"], "chunk_index": row["CHUNK_INDEX"],
-            "checksum": row["CHECKSUM"], "nodes": []})
+            "chunk_size": row["CHUNK_SIZE"], "checksum": row["CHECKSUM"], "nodes": []})
         if row["NODE_ID"] and row["LOCATION_STATUS"] == "STORED":
             item["nodes"].append({
                 "node_id": row["NODE_ID"], "host": row["HOST"], "port": row["PORT"],

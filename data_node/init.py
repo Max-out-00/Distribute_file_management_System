@@ -7,9 +7,11 @@ Run from the project root, e.g.:
 """
 import argparse
 import logging
-import time
+import signal
+import threading
 
 from shared import constants
+from . import dirlock
 from .heartbeat import HeartbeatSender
 from .node_server import DataNodeServer
 from .storage import ChunkStorage
@@ -23,6 +25,8 @@ def main():
     p.add_argument("--host", dest="legacy_host", default=None, help=argparse.SUPPRESS)
     p.add_argument("--port", type=int, required=True)
     p.add_argument("--storage-dir", default=None)
+    p.add_argument("--capacity", type=int, default=None,
+                   help="artificial storage capacity in bytes (overrides NODE_CAPACITY_BYTES)")
     p.add_argument("--meta-host", "--metadata-host", default=constants.METADATA_HOST)
     p.add_argument("--meta-port", "--metadata-port", type=int,
                    default=constants.METADATA_PORT)
@@ -33,19 +37,37 @@ def main():
                         format=f"%(asctime)s [{a.node_id}] %(name)s: %(message)s")
 
     advertise_host = a.advertise_host or a.legacy_host or constants.HOST
-    storage = ChunkStorage(a.storage_dir or f"data_node/chunks/{a.node_id}")
-    server = DataNodeServer(a.bind_host, a.port, storage)
-    heartbeat = HeartbeatSender(a.node_id, advertise_host, a.port, storage,
-                                a.meta_host, a.meta_port, a.heartbeat_interval)
-    server.start()
-    heartbeat.start()
-
+    storage_dir = a.storage_dir or f"data_node/chunks/{a.node_id}"
+    if a.capacity is not None and a.capacity < 0:
+        p.error("--capacity must be non-negative")
+    lock = dirlock.acquire(storage_dir)
+    server = None
+    heartbeat = None
+    stop_event = threading.Event()
+    signal.signal(signal.SIGINT, lambda _signum, _frame: stop_event.set())
+    signal.signal(signal.SIGTERM, lambda _signum, _frame: stop_event.set())
     try:
-        while True:
-            time.sleep(1)
+        storage = ChunkStorage(storage_dir, capacity_bytes=a.capacity)
+        leftovers = storage.recover()
+        if leftovers:
+            logging.getLogger("data_node").warning(
+                "removed %d incomplete write(s) left by a crash", leftovers
+            )
+        server = DataNodeServer(a.bind_host, a.port, storage)
+        heartbeat = HeartbeatSender(a.node_id, advertise_host, a.port, storage,
+                                    a.meta_host, a.meta_port, a.heartbeat_interval)
+        server.start()
+        heartbeat.start()
+        while not stop_event.wait(1):
+            pass
     except KeyboardInterrupt:
-        heartbeat.stop()
-        server.stop()
+        pass
+    finally:
+        if heartbeat:
+            heartbeat.stop()
+        if server:
+            server.stop()
+        lock.close()
 
 
 if __name__ == "__main__":

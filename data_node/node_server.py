@@ -16,6 +16,7 @@ import logging
 import socket
 import threading
 
+from shared import constants
 from shared.message import recv_msg, send_msg
 
 log = logging.getLogger("data_node.server")
@@ -102,7 +103,21 @@ class DataNodeServer:
                 send_msg(conn, {"status": "error", "error": "checksum mismatch",
                                 "message": "checksum mismatch"})
                 return
-            digest = self.storage.write_chunk(cid, payload)
+            existing_size = 0
+            if self.storage.has_chunk(cid):
+                existing_size = len(self.storage.read_chunk(cid))
+            required_bytes = max(0, len(payload) - existing_size)
+            if self.storage.free_space() - required_bytes < constants.MIN_FREE_BYTES:
+                send_msg(conn, {"status": "error", "error": "disk full: insufficient disk space",
+                                "message": "disk full: insufficient disk space"})
+                return
+            try:
+                digest = self.storage.write_chunk(cid, payload)
+            except OSError as error:
+                if "disk full" in str(error).lower() or getattr(error, "errno", None) == 28:
+                    send_msg(conn, {"status": "error", "error": f"disk full: {error}"})
+                    return
+                raise
             log.info("stored chunk %s (%d bytes)", cid, len(payload))
             send_msg(conn, {"status": "ok", "checksum": digest})
 

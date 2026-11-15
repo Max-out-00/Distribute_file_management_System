@@ -22,7 +22,7 @@ class HeartbeatSender:
             "node_id": self.node_id,
             "host": self.host,
             "port": self.port,
-            "free_bytes": self.storage.free_space(),
+            "free_bytes": max(0, self.storage.free_space()),
             "chunk_ids": self.storage.list_chunks() if cmd == "REGISTER" else None,
         }
 

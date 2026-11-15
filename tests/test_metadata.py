@@ -2,9 +2,78 @@ from metadata_server import db, queries
 from client.upload import call
 from dashboard.app import build_recovery_notice
 from metadata_server.server import MetadataServer
+from shared import constants
 
 
+<<<<<<< Updated upstream
 def test_replication_issues_are_reported_for_incomplete_replica_sets(tmp_path):
+=======
+def test_initialize_recreates_empty_integer_file_id_schema(tmp_path, monkeypatch):
+    monkeypatch.setattr(constants, "RESERVE_BYTES", 0, raising=False)
+    database = tmp_path / "metadata.db"
+    with sqlite3.connect(database) as conn:
+        conn.execute(
+            """CREATE TABLE FILES (
+                FILE_ID INTEGER PRIMARY KEY NOT NULL,
+                FILE_NAME TEXT NOT NULL,
+                SIZE INTEGER NOT NULL,
+                CREATED_AT TEXT NOT NULL,
+                STATUS TEXT
+            )"""
+        )
+
+    db.initialize(database)
+
+    with db.connection(database) as conn:
+        file_id = next(
+            row for row in conn.execute("PRAGMA table_info(FILES)")
+            if row["name"] == "FILE_ID"
+        )
+        assert file_id["type"] == "TEXT"
+        assert file_id["pk"] == 1
+        for index in range(constants.REPLICATION_FACTOR):
+            queries.register_node(conn, f"node-{index}", "127.0.0.1", index + 1, 1 << 40, 100)
+        planned, _ = queries.create_upload_plan(
+            conn,
+            "a" * 32,
+            "sample.bin",
+            1,
+            [{"chunk_id": "chunk-a", "chunk_index": 0, "chunk_size": 1,
+              "checksum": "a" * 64}],
+            100,
+            1,
+        )
+        assert len(planned) == 1
+
+
+def test_initialize_preserves_populated_incompatible_file_table(tmp_path):
+    database = tmp_path / "metadata.db"
+    with sqlite3.connect(database) as conn:
+        conn.execute(
+            """CREATE TABLE FILES (
+                FILE_ID INTEGER PRIMARY KEY NOT NULL,
+                FILE_NAME TEXT NOT NULL,
+                SIZE INTEGER NOT NULL,
+                CREATED_AT TEXT NOT NULL,
+                STATUS TEXT
+            )"""
+        )
+        conn.execute(
+            "INSERT INTO FILES VALUES (1, 'sample.bin', 1, 'now', 'COMPLETE')"
+        )
+
+    with pytest.raises(
+        RuntimeError, match="legacy metadata tables contain data and need migration: FILES"
+    ):
+        db.initialize(database)
+
+    with sqlite3.connect(database) as conn:
+        assert conn.execute("SELECT FILE_ID FROM FILES").fetchone() == (1,)
+
+
+def test_replication_issues_are_reported_for_incomplete_replica_sets(tmp_path, monkeypatch):
+    monkeypatch.setattr(constants, "RESERVE_BYTES", 0, raising=False)
+>>>>>>> Stashed changes
     database = tmp_path / "metadata.db"
     db.initialize(database)
     with db.connection(database) as conn:
@@ -14,19 +83,20 @@ def test_replication_issues_are_reported_for_incomplete_replica_sets(tmp_path):
             conn, "file-1", "sample.bin", 4,
             [{"chunk_id": "chunk-a", "chunk_index": 0, "chunk_size": 4,
               "checksum": "a" * 64}],
-            100, 3,
+            100, constants.REPLICATION_FACTOR,
         )
-        issues = queries.get_replication_issues(conn, 3)
+        issues = queries.get_replication_issues(conn)
         assert len(issues) == 1
         assert issues[0]["file_id"] == "file-1"
         assert issues[0]["alive_copies"] == 0
         plans = planned[0]["nodes"]
         queries.mark_replica(conn, "chunk-a", plans[0]["node_id"], "STORED")
-        issues = queries.get_replication_issues(conn, 3)
+        issues = queries.get_replication_issues(conn)
         assert issues[0]["alive_copies"] == 1
 
 
-def test_under_replicated_chunks_and_target_selection(tmp_path):
+def test_under_replicated_chunks_and_target_selection(tmp_path, monkeypatch):
+    monkeypatch.setattr(constants, "RESERVE_BYTES", 0, raising=False)
     database = tmp_path / "metadata.db"
     db.initialize(database)
     with db.connection(database) as conn:
@@ -40,14 +110,14 @@ def test_under_replicated_chunks_and_target_selection(tmp_path):
                 {"chunk_id": "chunk-b", "chunk_index": 1, "chunk_size": 4,
                  "checksum": "b" * 64},
             ],
-            100, 2,
+            100, constants.REPLICATION_FACTOR,
         )
         assert alive == 4
-        assert len(planned[0]["nodes"]) == 3
+        assert len(planned[0]["nodes"]) == constants.REPLICATION_FACTOR
         assert queries.confirm_replica(conn, "chunk-a", planned[0]["nodes"][0]["node_id"])
         for node in planned[1]["nodes"]:
-            queries.mark_replica(conn, "chunk-b", node["node_id"], "STORED")
-        under_replicated = queries.get_under_replicated_chunks(conn, 3)
+            queries.confirm_replica(conn, "chunk-b", node["node_id"])
+        under_replicated = queries.get_under_replicated_chunks(conn, constants.REPLICATION_FACTOR)
         assert [chunk["chunk_id"] for chunk in under_replicated] == ["chunk-a"]
         assert len(under_replicated[0]["sources"]) == 1
         target = queries.pick_target_node(conn, "chunk-a")
@@ -58,9 +128,11 @@ def test_under_replicated_chunks_and_target_selection(tmp_path):
         queries.mark_replica(conn, "chunk-a", target["NODE_ID"], "PENDING")
         queries.remove_pending_replica(conn, "chunk-a", target["NODE_ID"])
         assert queries.pick_target_node(conn, "chunk-a")["NODE_ID"] == target["NODE_ID"]
+        queries.mark_replica(conn, "chunk-a", target["NODE_ID"], "PENDING")
+        queries.confirm_replica(conn, "chunk-a", target["NODE_ID"])
         locations = queries.get_file_locations(conn, "file-1")
         assert locations[0]["chunk_id"] == "chunk-a"
-        assert len(locations[0]["nodes"]) == 1
+        assert len(locations[0]["nodes"]) == constants.REPLICATION_FACTOR
         assert len(queries.list_nodes(conn)) == 4
 
 

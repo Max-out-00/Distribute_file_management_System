@@ -1,13 +1,9 @@
-<<<<<<< HEAD
 import hashlib
-=======
->>>>>>> 7705a94da38dbc1d6ca4308c4dc77434284e87ba
 import json
 import os
 import sqlite3
 import sys
 import tempfile
-<<<<<<< HEAD
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -22,20 +18,15 @@ from flask import (
     send_file,
     url_for,
 )
-=======
-from pathlib import Path
-
-from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
->>>>>>> 7705a94da38dbc1d6ca4308c4dc77434284e87ba
 from werkzeug.utils import secure_filename
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-<<<<<<< HEAD
 from client.chunker import split_file
-from client.upload import call
+from client.download import report_corrupt
+from client.upload import call, plan_upload
 from shared import constants
 
 app = Flask(__name__)
@@ -45,11 +36,11 @@ app.config["MAX_CONTENT_LENGTH"] = int(
 )
 
 BASE_DIR = Path(__file__).resolve().parent
-DATABASE = Path(os.environ.get("DASHBOARD_DATABASE", str(BASE_DIR / "piyush_files.db")))
-CHUNK_SIZE = constants.CHUNK_SIZE
+DB_PATH = Path(os.environ.get("DASHBOARD_DATABASE", str(BASE_DIR / "dashboard_files.db")))
+DATABASE = DB_PATH
 MAX_FILE_BYTES = app.config["MAX_CONTENT_LENGTH"]
-METADATA_HOST = os.environ.get("METADATA_HOST", "localhost")
-METADATA_PORT = int(os.environ.get("METADATA_PORT", "5000"))
+METADATA_HOST = os.environ.get("METADATA_HOST", constants.METADATA_HOST)
+METADATA_PORT = int(os.environ.get("METADATA_PORT", str(constants.METADATA_PORT)))
 METADATA_TIMEOUT = float(os.environ.get("DASHBOARD_METADATA_TIMEOUT", "8"))
 NODE_IDS = ("node1", "node2", "node3")
 CURRENT_BACKEND_REPLICATION_FACTOR = constants.REPLICATION_FACTOR
@@ -79,60 +70,29 @@ class DatabaseConnection:
 
 
 def get_db():
-    return DatabaseConnection(DATABASE)
+    return DatabaseConnection(DB_PATH)
 
 
 def init_db():
-    DATABASE.parent.mkdir(parents=True, exist_ok=True)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with get_db() as db:
         db.execute("""
-=======
-from client.download import download_file
-from client.upload import call, upload_file
-from shared import constants
-
-app = Flask(__name__)
-app.secret_key = 'distributed-fs-ui'
-app.config['MAX_CONTENT_LENGTH'] = 512 * 1024 * 1024
-
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / 'dashboard_files.db'
-METADATA_HOST = os.environ.get('METADATA_HOST', '127.0.0.1')
-METADATA_PORT = int(os.environ.get('METADATA_PORT', '9999'))
-
-
-def resolve_metadata():
-    host = os.environ.get('METADATA_HOST', METADATA_HOST)
-    port = int(os.environ.get('METADATA_PORT', str(METADATA_PORT)))
-    constants.METADATA_HOST = host
-    constants.METADATA_PORT = port
-    return host, port
-
-
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    with get_db() as conn:
-        conn.execute(
-            '''
->>>>>>> 7705a94da38dbc1d6ca4308c4dc77434284e87ba
             CREATE TABLE IF NOT EXISTS files (
                 file_id TEXT PRIMARY KEY,
+                id TEXT,
                 filename TEXT NOT NULL,
                 size INTEGER NOT NULL,
+                checksum TEXT,
                 chunks TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL
             )
-<<<<<<< HEAD
         """)
         columns = {
             row["name"] for row in db.execute("PRAGMA table_info(files)").fetchall()
         }
         additions = {
+            "id": "TEXT",
+            "checksum": "TEXT",
             "stored_name": "TEXT",
             "metadata_file_id": "TEXT",
             "upload_status": "TEXT",
@@ -211,54 +171,15 @@ def _update_activity(activity_id, status, message=""):
 def _get_history():
     with get_db() as db:
         rows = db.execute("""
-            SELECT id, filename, size, checksum, chunks, created_at,
+            SELECT id, file_id, filename, size, checksum, chunks, created_at,
                    metadata_file_id, upload_status, replica_counts, integrity_status
             FROM files ORDER BY created_at DESC, rowid DESC
         """).fetchall()
     files = []
-=======
-            '''
-        )
-
-
-def _nodes_from_metadata():
-    meta_host, meta_port = resolve_metadata()
-    try:
-        response, _ = call(meta_host, meta_port, {'type': 'LIST_NODES'}, timeout=3)
-        nodes = response.get('nodes', []) if isinstance(response, dict) else []
-    except Exception:
-        nodes = []
-    results = []
-    for node in nodes:
-        results.append({
-            'id': node.get('node_id', 'unknown'),
-            'host': node.get('host', 'unknown'),
-            'port': node.get('port', 0),
-            'online': bool(node.get('alive', False)),
-            'status': 'Online' if node.get('alive', False) else 'Offline',
-        })
-    return results
-
-
-def build_recovery_notice(nodes):
-    offline = [n for n in nodes if not n.get('online', False)]
-    if not offline:
-        return None
-    node_names = ', '.join(node['id'] for node in offline)
-    return f"Recovery notice: {node_names} are offline. The failure detector is re-replicating affected chunks and the dashboard will refresh with the latest metadata."
-
-
-def _files_from_db():
-    with get_db() as conn:
-        rows = conn.execute(
-            'SELECT file_id, filename, size, chunks, created_at FROM files ORDER BY created_at DESC'
-        ).fetchall()
-    out = []
->>>>>>> 7705a94da38dbc1d6ca4308c4dc77434284e87ba
     for row in rows:
-        chunks = []
+        item = dict(row)
+        item["id"] = item["id"] or item["file_id"]
         try:
-<<<<<<< HEAD
             item["chunks"] = json.loads(item["chunks"] or "[]")
         except (TypeError, json.JSONDecodeError):
             item["chunks"] = []
@@ -266,8 +187,10 @@ def _files_from_db():
             item["replica_counts"] = json.loads(item["replica_counts"] or "[]")
         except (TypeError, json.JSONDecodeError):
             item["replica_counts"] = []
-        item["upload_status"] = item["upload_status"] or "Legacy local history"
-        item["download_available"] = bool(item["metadata_file_id"])
+        item["upload_status"] = item["upload_status"] or (
+            "Uploaded" if item["file_id"] else "Legacy local history"
+        )
+        item["download_available"] = bool(item["metadata_file_id"] or item["file_id"])
         item["chunk_count"] = len(item["chunks"])
         files.append(item)
     return files
@@ -297,20 +220,27 @@ def _get_nodes():
         response, _ = metadata_request({"type": "LIST_NODES"})
         if response.get("status") != "ok" or not isinstance(response.get("nodes"), list):
             raise RuntimeError(response.get("error", "Metadata returned an invalid node list"))
+        result = {}
         for reported in response["nodes"]:
+            if not isinstance(reported, dict):
+                continue
             node_id = reported.get("node_id")
-            if node_id not in result:
+            if not isinstance(node_id, str) or not node_id.strip():
                 continue
             alive = reported.get("alive")
-            result[node_id].update({
-                "host": reported.get("host") or result[node_id]["host"],
-                "port": reported.get("port") or result[node_id]["port"],
+            free_bytes = reported.get("free_bytes")
+            result[node_id] = {
+                "id": node_id,
+                "host": reported.get("host") or node_id,
+                "port": reported.get("port"),
                 "state": "alive" if alive is True else "dead" if alive is False else "unknown",
                 "status": "Alive" if alive is True else "Dead" if alive is False else "Unknown",
-            })
+                "free_bytes": free_bytes if type(free_bytes) is int and free_bytes >= 0 else None,
+                "last_heartbeat": None,
+            }
     except (OSError, ValueError, TypeError, RuntimeError, TimeoutError) as exc:
         error = str(exc)
-    return list(result.values()), error
+    return sorted(result.values(), key=lambda node: node["id"]), error
 
 
 def _sha256_file(path):
@@ -324,28 +254,14 @@ def _sha256_file(path):
 def _run_upload(job_id, temp_path, filename, size, history_id):
     metadata_file_id = None
     try:
-        descriptors = []
-        for index, data, checksum in split_file(temp_path, CHUNK_SIZE):
-            descriptors.append({
-                "chunk_id": f"{history_id}_{index}",
-                "chunk_index": index,
-                "chunk_size": len(data),
-                "checksum": checksum,
-            })
-        response, _ = metadata_request({
-            "type": "PLAN_UPLOAD",
-            "file_name": filename,
-            "file_size": size,
-            "chunks": descriptors,
-        })
-        if response.get("status") != "ok":
-            raise RuntimeError(response.get("error", "Metadata server rejected the upload plan"))
-        metadata_file_id = response.get("file_id")
-        planned = response.get("chunks")
-        if not isinstance(metadata_file_id, str) or not isinstance(planned, list):
-            raise RuntimeError("Metadata returned an incomplete upload plan")
-        if len(planned) != len(descriptors):
-            raise RuntimeError("Metadata upload plan does not match the chunk count")
+        upload_plan = plan_upload(
+            temp_path,
+            upload_id=history_id,
+            request=lambda _host, _port, message: metadata_request(message),
+        )
+        metadata_file_id = upload_plan["file_id"]
+        descriptors = upload_plan["descriptors"]
+        planned = upload_plan["planned"]
 
         counts = []
         total_work = 0
@@ -370,17 +286,22 @@ def _run_upload(job_id, temp_path, filename, size, history_id):
         completed_bytes = 0
         completed_chunks = []
         errors = []
-        for index, data, checksum in split_file(temp_path, CHUNK_SIZE):
-            plan = planned[index]
+        uploaded_chunks = 0
+        for index, data, checksum in split_file(temp_path, upload_plan["chunk_size"]):
+            if (index >= len(descriptors)
+                    or len(data) != descriptors[index]["chunk_size"]
+                    or checksum != descriptors[index]["checksum"]):
+                raise RuntimeError("source file changed after upload planning")
+            chunk_plan = planned[index]
             confirmed_nodes = []
             target_errors = []
-            for node in plan["nodes"]:
+            for node in chunk_plan["nodes"]:
                 try:
                     if not isinstance(node.get("node_id"), str):
                         raise RuntimeError("Upload plan contains a target without a node ID")
                     reply, _ = data_node_request(node, {
                         "cmd": "PUT_CHUNK",
-                        "chunk_id": plan["chunk_id"],
+                        "chunk_id": chunk_plan["chunk_id"],
                         "checksum": checksum,
                         "size": len(data),
                     }, data, timeout=30)
@@ -388,7 +309,7 @@ def _run_upload(job_id, temp_path, filename, size, history_id):
                         raise RuntimeError(reply.get("error", reply.get("message", "Node did not verify the chunk checksum")))
                     acknowledgement, _ = metadata_request({
                         "type": "CHUNK_STORED",
-                        "chunk_id": plan["chunk_id"],
+                        "chunk_id": chunk_plan["chunk_id"],
                         "node_id": node["node_id"],
                     })
                     if acknowledgement.get("status") != "ok":
@@ -400,16 +321,20 @@ def _run_upload(job_id, temp_path, filename, size, history_id):
                     target_errors.append(f"{node.get('node_id', 'target')}: {exc}")
             completed_chunks.append({
                 "index": index,
-                "chunk_id": plan["chunk_id"],
+                "chunk_id": chunk_plan["chunk_id"],
                 "size": len(data),
                 "checksum": checksum,
-                "assigned_nodes": [node.get("node_id") for node in plan["nodes"]],
+                "assigned_nodes": [node.get("node_id") for node in chunk_plan["nodes"]],
                 "confirmed_nodes": confirmed_nodes,
-                "assigned_replicas": len(plan["nodes"]),
+                "assigned_replicas": len(chunk_plan["nodes"]),
                 "confirmed_replicas": len(confirmed_nodes),
             })
-            if len(confirmed_nodes) != len(plan["nodes"]):
-                errors.append(f"Chunk {index}: confirmed {len(confirmed_nodes)} of {len(plan['nodes'])} assigned replicas. " + "; ".join(target_errors))
+            if len(confirmed_nodes) != len(chunk_plan["nodes"]):
+                errors.append(f"Chunk {index}: confirmed {len(confirmed_nodes)} of {len(chunk_plan['nodes'])} assigned replicas. " + "; ".join(target_errors))
+            uploaded_chunks += 1
+
+        if uploaded_chunks != len(descriptors):
+            raise RuntimeError("source file changed after upload planning")
 
         if errors:
             message = "Upload was not fully replicated. " + " ".join(errors)
@@ -476,11 +401,13 @@ def _run_download(job_id, metadata_file_id, filename, expected_size, expected_ch
                 nodes = chunk.get("nodes")
                 if not isinstance(nodes, list):
                     raise RuntimeError(f"Metadata returned invalid replica locations for chunk {chunk.get('chunk_index')}")
+                candidates = [node for node in nodes if node.get("alive", True)]
+                if candidates:
+                    offset = chunk.get("chunk_index", 0) % len(candidates)
+                    candidates = candidates[offset:] + candidates[:offset]
                 chunk_data = None
                 failures = []
-                for node in nodes:
-                    if node.get("alive") is False:
-                        continue
+                for node in candidates:
                     try:
                         reply, data = data_node_request(node, {
                             "cmd": "GET_CHUNK", "chunk_id": chunk["chunk_id"]
@@ -488,7 +415,21 @@ def _run_download(job_id, metadata_file_id, filename, expected_size, expected_ch
                         if reply.get("status") != "ok":
                             raise RuntimeError(reply.get("error", "Node rejected chunk read"))
                         if hashlib.sha256(data).hexdigest() != expected_chunk_checksum:
+                            try:
+                                report_corrupt(
+                                    chunk["chunk_id"], node["node_id"], metadata_request
+                                )
+                            except (OSError, ValueError, RuntimeError, TimeoutError) as report_error:
+                                app.logger.warning(
+                                    "Could not report corrupt replica %s on %s: %s",
+                                    chunk["chunk_id"], node.get("node_id", "unknown"),
+                                    report_error,
+                                )
                             raise RuntimeError("SHA-256 verification failed")
+                        expected_chunk_size = chunk.get("chunk_size")
+                        if (expected_chunk_size is not None
+                                and len(data) != expected_chunk_size):
+                            raise RuntimeError("chunk size verification failed")
                         chunk_data = data
                         break
                     except (OSError, ValueError, TypeError, RuntimeError, TimeoutError) as exc:
@@ -540,6 +481,7 @@ def home():
         online_nodes=sum(node["state"] == "alive" for node in nodes),
         dead_nodes=sum(node["state"] == "dead" for node in nodes),
         unknown_nodes=sum(node["state"] == "unknown" for node in nodes),
+        node_count=len(nodes),
         local_file_count=len(files),
         local_bytes=sum(item["size"] or 0 for item in files),
         current_replication_factor=CURRENT_BACKEND_REPLICATION_FACTOR,
@@ -552,7 +494,7 @@ def api_nodes():
     nodes, error = _get_nodes()
     return jsonify({"nodes": nodes, "error": error,
                     "online_nodes": sum(node["state"] == "alive" for node in nodes),
-                    "total_configured": len(NODE_IDS)})
+                    "total_configured": len(nodes)})
 
 
 @app.route("/api/files")
@@ -686,125 +628,13 @@ def _remove_download_file(path, job_id):
 @app.errorhandler(413)
 def request_too_large(_error):
     return jsonify({"error": "Upload exceeds the configured request size limit."}), 413
-=======
-            chunks = json.loads(row['chunks'] or '[]')
-        except json.JSONDecodeError:
-            chunks = []
-        out.append({
-            'file_id': row['file_id'],
-            'filename': row['filename'],
-            'size': row['size'],
-            'chunks': chunks,
-            'chunk_count': len(chunks),
-            'created_at': row['created_at'],
-        })
-    return out
-
-
-@app.route('/')
-@app.route('/home')
-def home():
-    files = _files_from_db()
-    nodes = _nodes_from_metadata()
-    recovery_notice = build_recovery_notice(nodes)
-    return render_template(
-        'index.html',
-        files=files,
-        nodes=nodes,
-        total_files=len(files),
-        online_nodes=sum(1 for n in nodes if n['online']),
-        total_nodes=len(nodes),
-        recovery_notice=recovery_notice,
-    )
-
-
-@app.route('/upload', methods=['POST'])
-def upload():
-    uploaded = request.files.get('file')
-    if uploaded is None or not uploaded.filename:
-        flash('Please choose a file first.', 'error')
-        return redirect(url_for('home'))
-
-    filename = secure_filename(uploaded.filename)
-    if not filename:
-        flash('The filename is invalid.', 'error')
-        return redirect(url_for('home'))
-
-    tmp = None
-    meta_host, meta_port = resolve_metadata()
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as handle:
-            uploaded.save(handle.name)
-            tmp = handle.name
-        file_id = upload_file(tmp)
-
-        response, _ = call(meta_host, meta_port, {'type': 'GET_LOCATIONS', 'file_id': file_id}, timeout=5)
-        chunk_data = response.get('chunks', []) if isinstance(response, dict) else []
-
-        with get_db() as conn:
-            conn.execute(
-                'INSERT OR REPLACE INTO files (file_id, filename, size, chunks, created_at) VALUES (?, ?, ?, ?, datetime("now"))',
-                (file_id, filename, os.path.getsize(tmp), json.dumps(chunk_data)),
-            )
-        flash(f'Uploaded and distributed: {filename}', 'success')
-    except Exception as exc:
-        flash(f'Upload failed: {exc}', 'error')
-    finally:
-        if tmp and os.path.exists(tmp):
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-    return redirect(url_for('home'))
-
-
-def _lookup_name(file_id):
-    with get_db() as conn:
-        row = conn.execute('SELECT filename FROM files WHERE file_id = ?', (file_id,)).fetchone()
-    if row is None:
-        return f'{file_id}.bin'
-    return row['filename']
-
-
-@app.route('/download/<file_id>')
-def download(file_id):
-    resolve_metadata()
-    tmp = tempfile.NamedTemporaryFile(delete=False).name
-    try:
-        download_file(file_id, tmp)
-        return send_file(tmp, as_attachment=True, download_name=_lookup_name(file_id))
-    except Exception as exc:
-        flash(f'Download failed: {exc}', 'error')
-        return redirect(url_for('home'))
-
-
-@app.route('/api/files')
-def api_files():
-    return jsonify({'files': _files_from_db()})
-
-
-@app.route('/api/nodes')
-def api_nodes():
-    return jsonify({'nodes': _nodes_from_metadata()})
-
-
-@app.errorhandler(413)
-def too_large(_error):
-    flash('File too large. Maximum upload size is 512 MB.', 'error')
-    return redirect(url_for('home'))
->>>>>>> 7705a94da38dbc1d6ca4308c4dc77434284e87ba
 
 
 init_db()
 
-<<<<<<< HEAD
 if __name__ == "__main__":
     app.run(
         host=os.environ.get("DASHBOARD_BIND_HOST", "127.0.0.1"),
         port=int(os.environ.get("DASHBOARD_PORT", "8000")),
         debug=False,
     )
-=======
-if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=8000, debug=False)
->>>>>>> 7705a94da38dbc1d6ca4308c4dc77434284e87ba

@@ -44,7 +44,8 @@ def handle_message(message, db_path):
             nodes = queries.list_nodes(conn)
             return {"status": "ok", "nodes": [
                 {"node_id": n["NODE_ID"], "host": n["HOST"], "port": n["PORT"],
-                 "alive": n["STATUS"] == "ALIVE"} for n in nodes
+                 "alive": n["STATUS"] == "ALIVE", "free_bytes": n["FREE_BYTES"]}
+                for n in nodes
             ]}
 
         if message_type == "PLAN_UPLOAD":
@@ -80,7 +81,7 @@ def handle_message(message, db_path):
                 conn, file_id, file_name, size, chunks, time.time(),
                 constants.REPLICATION_FACTOR,
             )
-            if alive < constants.REPLICATION_FACTOR:
+            if chunks and alive < constants.REPLICATION_FACTOR:
                 log.warning("only %d alive nodes; upload replication is limited", alive)
             return {"status": "ok", "file_id": file_id, "chunks": planned}
 
@@ -97,5 +98,15 @@ def handle_message(message, db_path):
             if chunks is None:
                 raise ValueError("file not found")
             return {"status": "ok", "chunks": chunks}
+
+        if message_type == "REPORT_CORRUPT":
+            cid = _required(message, "chunk_id", str)
+            node_id = _required(message, "node_id", str)
+            if not CHUNK_ID.fullmatch(cid):
+                raise ValueError("invalid chunk_id")
+            if not queries.report_corrupt_replica(conn, cid, node_id):
+                raise ValueError("chunk replica was not marked STORED")
+            log.warning("corrupt replica %s on node %s removed from metadata", cid, node_id)
+            return {"status": "ok", "removed": True}
 
     raise ValueError(f"unknown message type {message_type!r}")
