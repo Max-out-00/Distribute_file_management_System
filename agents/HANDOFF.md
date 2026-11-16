@@ -163,3 +163,11 @@
 - User changes preserved: modified metadata.db, node lock files, and untracked node chunk files were not deleted or reset.
 - Chunking status: client-side chunk creation, chunk size, indexes, counts, reconstruction, and dashboard chunk-count display were not modified.
 >>>>>>> Stashed changes
+
+## 2026-11-15 — Delete flow completed
+- What changed: Implemented atomic file/chunk/location metadata deletion, best-effort `DELETE_CHUNK` cleanup on each replica node, the client `delete_file` helper, `dfs delete`, and dashboard Delete controls/API. Updated protocol and usage documentation.
+- Files touched: `metadata_server/queries.py`, `metadata_server/handlers.py`, `client/delete.py`, `client/cli.py`, `dashboard/app.py`, `dashboard/templates/index.html`, `dashboard/static/style.css`, `docs/protocol.md`, `README.md`, `tests/test_delete.py`, `agents/HANDOFF.md`.
+- New or changed message types: No new types; completed the existing `DELETE_FILE` metadata request and reused `DELETE_CHUNK`.
+- Tests added: Dashboard success and unreachable-metadata cleanup behavior; existing cluster integration test validates chunk and metadata removal.
+- Validation: `python -m pytest -q tests/test_delete.py` passed (3 tests). The full suite cannot collect due to pre-existing conflict markers in `tests/test_metadata.py` and missing `client.download.read_range` imported by `tests/test_os_features.py`. Excluding those files still exposes pre-existing dashboard/node-lifecycle test mismatches (13 failed, 35 passed); the dashboard tests assert an older app API/template.
+- What the next agent must know: Metadata removal is authoritative; unreachable node replicas are reported in `unreachable_replicas` and may remain as orphans. The pre-existing modified `metadata_server/metadata.db` was preserved.

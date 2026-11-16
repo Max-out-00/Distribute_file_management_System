@@ -78,12 +78,12 @@ The following requests use the `cmd` field.
 - Replies: `{"status":"ok","deleted":true}` or `{"status":"ok","exists":true}`.
 - Errors: invalid chunk ID or storage error.
 
-## DELETE_FILE (metadata server)
+## `DELETE_FILE` (metadata server)
 
-Request: `{"type": "DELETE_FILE", "file_id": "<id>"}`
-Reply: `{"status": "ok", "deleted_chunks": N, "unreachable_replicas": M}` or an error (`file not found`, lock timeout).
-The server locks the file and all its chunks (sorted order), deletes the metadata in one transaction, then sends
-`DELETE_CHUNK` to every node that held a replica. Replicas on unreachable nodes remain as orphans (no garbage collector yet).
+- Request: `{"type":"DELETE_FILE","file_id":"<id>"}`
+- Reply: `{"status":"ok","deleted_chunks":N,"unreachable_replicas":M}`. `deleted_chunks` counts distinct chunks; `unreachable_replicas` counts node cleanup requests that failed.
+- Errors: missing/unknown file ID, invalid request, or metadata database error.
+- The server atomically removes the file, its chunk rows, and its replica-location rows, then sends `DELETE_CHUNK` to every node that had a planned or stored replica. Cleanup is best effort: metadata deletion succeeds even if a node is unreachable, and that node's leftover chunk is an orphan (there is no orphan garbage collector yet).
 
 ## Overload
 

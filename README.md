@@ -45,13 +45,14 @@ Then open the browser at:
 http://127.0.0.1:8000
 ```
 
-Use the UI to upload files and download stored files. Chunks are at most 4 MiB by default; clients reduce the per-file chunk size when the live node capacities cannot fit a 4 MiB chunk on the required number of distinct nodes. Each chunk is stored with the configured replication factor (2 by default), and uploads fail rather than silently reducing that factor when capacity is insufficient. The dashboard uses the live metadata server and data nodes directly, shows a green progress bar for uploads/downloads, surfaces node recovery notices when data nodes drop offline, and keeps a simple data log of each uploaded file and its timestamp.
+Use the UI to upload, download, and delete stored files. Chunks are at most 4 MiB by default; clients reduce the per-file chunk size when the live node capacities cannot fit a 4 MiB chunk on the required number of distinct nodes. Each chunk is stored with the configured replication factor (2 by default), and uploads fail rather than silently reducing that factor when capacity is insufficient. The dashboard uses the live metadata server and data nodes directly, shows a green progress bar for uploads/downloads, surfaces node recovery notices when data nodes drop offline, and keeps a simple data log of each uploaded file and its timestamp.
 
 Command-line alternative:
 
 ```powershell
 python -m client.cli upload .\sample.bin
 python -m client.cli download <FILE_ID> .\restored.bin
+python -m client.cli delete <FILE_ID>
 ```
 
 You can also run the built-in recovery demo script:
@@ -142,6 +143,7 @@ Upload and download through the optional client profile:
 ```sh
 docker compose run --rm client python -m client.cli upload sample.bin
 docker compose run --rm client python -m client.cli download YOUR_FILE_ID downloaded.bin
+docker compose run --rm client python -m client.cli delete YOUR_FILE_ID
 ```
 
 Run the end-to-end failure-recovery demo (PowerShell users can run

@@ -25,6 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from client.chunker import split_file
+from client.delete import delete_file
 from client.download import report_corrupt
 from client.upload import call, plan_upload
 from shared import constants
@@ -501,6 +502,41 @@ def api_nodes():
 def api_files():
     return jsonify({"source": "Local Dashboard History; not a metadata-server listing",
                     "files": _get_history()})
+
+
+@app.route("/api/files/<history_id>", methods=["DELETE"])
+def delete_dashboard_file(history_id):
+    with get_db() as db:
+        row = db.execute(
+            """SELECT id, file_id, metadata_file_id, filename, size
+               FROM files WHERE id=? OR file_id=? LIMIT 1""",
+            (history_id, history_id),
+        ).fetchone()
+    if row is None:
+        return jsonify({"error": "File not found in dashboard history."}), 404
+
+    metadata_file_id = row["metadata_file_id"] or row["file_id"]
+    if not metadata_file_id:
+        return jsonify({"error": "This local history entry has no metadata file ID."}), 409
+    try:
+        result = delete_file(metadata_file_id)
+    except RuntimeError as exc:
+        if "file not found" not in str(exc).lower():
+            return jsonify({"error": str(exc)}), 502
+        result = {"deleted_chunks": 0, "unreachable_replicas": 0}
+    except (OSError, TimeoutError) as exc:
+        return jsonify({"error": f"Metadata server is unreachable: {exc}"}), 503
+
+    with get_db() as db:
+        db.execute(
+            "DELETE FROM files WHERE id=? OR file_id=?",
+            (row["id"], row["file_id"]),
+        )
+    return jsonify({
+        "status": "ok",
+        "deleted_chunks": result["deleted_chunks"],
+        "unreachable_replicas": result["unreachable_replicas"],
+    })
 
 
 @app.route("/api/uploads", methods=["POST"])

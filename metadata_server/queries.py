@@ -277,3 +277,31 @@ def get_file_locations(conn, file_id):
                 "alive": row["NODE_STATUS"] == "ALIVE",
             })
     return list(chunks.values())
+
+
+def delete_file(conn, file_id):
+    if not conn.execute("SELECT 1 FROM FILES WHERE FILE_ID=?", (file_id,)).fetchone():
+        raise ValueError("file not found")
+    chunks = conn.execute(
+        "SELECT CHUNK_ID FROM CHUNKS WHERE FILE_ID=?",
+        (file_id,),
+    ).fetchall()
+    replicas = conn.execute(
+        """SELECT l.CHUNK_ID, n.HOST, n.PORT
+           FROM CHUNKS c
+           JOIN CHUNKS_LOCATION l ON l.CHUNK_ID=c.CHUNK_ID
+           JOIN NODES n ON n.NODE_ID=l.NODE_ID
+           WHERE c.FILE_ID=?""",
+        (file_id,),
+    ).fetchall()
+    conn.execute(
+        "DELETE FROM CHUNKS_LOCATION WHERE CHUNK_ID IN "
+        "(SELECT CHUNK_ID FROM CHUNKS WHERE FILE_ID=?)",
+        (file_id,),
+    )
+    conn.execute("DELETE FROM CHUNKS WHERE FILE_ID=?", (file_id,))
+    conn.execute("DELETE FROM FILES WHERE FILE_ID=?", (file_id,))
+    return {
+        "chunk_ids": [chunk["CHUNK_ID"] for chunk in chunks],
+        "replicas": [dict(replica) for replica in replicas],
+    }

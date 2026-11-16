@@ -3,6 +3,7 @@ import re
 import time
 import uuid
 
+from data_node.node_server import request as node_request
 from shared import constants
 from . import db, queries
 
@@ -24,6 +25,29 @@ def handle_message(message, db_path):
     message_type = _required(message, "type", str)
     if message_type == "PING":
         return {"status": "ok"}
+
+    if message_type == "DELETE_FILE":
+        file_id = _required(message, "file_id", str)
+        with db.connection(db_path) as conn:
+            deletion = queries.delete_file(conn, file_id)
+        unreachable = 0
+        for replica in deletion["replicas"]:
+            try:
+                reply, _ = node_request(
+                    replica["HOST"],
+                    replica["PORT"],
+                    {"cmd": "DELETE_CHUNK", "chunk_id": replica["CHUNK_ID"]},
+                    timeout=2,
+                )
+                if reply.get("status") != "ok":
+                    unreachable += 1
+            except (OSError, ValueError, TypeError):
+                unreachable += 1
+        return {
+            "status": "ok",
+            "deleted_chunks": len(deletion["chunk_ids"]),
+            "unreachable_replicas": unreachable,
+        }
 
     with db.connection(db_path) as conn:
         if message_type in ("REGISTER_NODE", "HEARTBEAT"):

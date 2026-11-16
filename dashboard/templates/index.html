@@ -107,7 +107,7 @@
             <div class="table-panel">
                 <div class="table-heading"><div><h3>Local Dashboard History</h3><p>Not a metadata-server file listing. Existing dashboard records are preserved.</p></div><span class="table-count">{{ local_file_count }} records</span></div>
                 {% if files %}
-                <div class="table-scroll"><table><thead><tr><th>File</th><th>Size</th><th>Upload time</th><th>Status</th><th>Actual assigned replicas</th><th>Integrity</th><th></th></tr></thead><tbody>
+                <div class="table-scroll"><table><thead><tr><th>File</th><th>Size</th><th>Upload time</th><th>Status</th><th>Actual assigned replicas</th><th>Integrity</th><th></th><th></th></tr></thead><tbody>
                 {% for file in files %}
                 <tr>
                     <td><div class="file-cell"><span class="file-type">▤</span><span><strong>{{ file.filename }}</strong><small>{% if file.metadata_file_id %}Metadata ID: {{ file.metadata_file_id }}{% else %}Dashboard-local record{% endif %}</small></span></div></td>
@@ -117,6 +117,7 @@
                     <td>{% if file.replica_counts %}{{ file.replica_counts|join(', ') }} per chunk{% else %}Unavailable{% endif %}</td>
                     <td>{{ file.integrity_status or 'Unavailable' }}</td>
                     <td>{% if file.download_available and file.upload_status == 'Uploaded' %}<button class="button button-small download-button" type="button" data-history-id="{{ file.id }}" data-size="{{ file.size }}" data-filename="{{ file.filename }}">Download</button>{% else %}<span class="muted">Unavailable</span>{% endif %}</td>
+                    <td>{% if file.download_available %}<button class="button button-small delete-button" type="button" data-history-id="{{ file.id }}" data-filename="{{ file.filename }}">Delete</button>{% else %}<span class="muted">Unavailable</span>{% endif %}</td>
                 </tr>
                 {% endfor %}
                 </tbody></table></div>
@@ -252,6 +253,21 @@
             row.querySelector('.queue-file-copy small').textContent = error.message;
         } finally {
             activeUploads = 0; jobs.forEach(other => other.disabled = false);
+        }
+    }));
+
+    document.querySelectorAll('.delete-button').forEach(button => button.addEventListener('click', async () => {
+        const filename = button.dataset.filename;
+        if (!window.confirm(`Permanently delete "${filename}" and its stored chunks?`)) return;
+        button.disabled = true;
+        try {
+            const response = await fetch(`/api/files/${encodeURIComponent(button.dataset.historyId)}`, {method:'DELETE'});
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'File could not be deleted');
+            window.location.reload();
+        } catch (error) {
+            window.alert(error.message);
+            button.disabled = false;
         }
     }));
 })();

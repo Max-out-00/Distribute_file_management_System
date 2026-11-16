@@ -1,4 +1,5 @@
 import argparse
+from client.delete import delete_file
 from client.upload import upload_file
 from client.download import download_file
 from client.upload import call
@@ -15,6 +16,9 @@ def main():
     down.add_argument("file_id")
     down.add_argument("output")
 
+    delete = sub.add_parser("delete", help="delete a file by id")
+    delete.add_argument("file_id")
+
     sub.add_parser("nodes", help="show nodes and whether they are alive")
 
     args = ap.parse_args()
@@ -25,6 +29,12 @@ def main():
     elif args.command == "download":
         download_file(args.file_id, args.output)
         print("Saved to", args.output)
+    elif args.command == "delete":
+        result = delete_file(args.file_id)
+        print(
+            f"Deleted {result['deleted_chunks']} chunks; "
+            f"{result['unreachable_replicas']} replica(s) unreachable."
+        )
     elif args.command == "nodes":
         resp, _ = call(C.METADATA_HOST, C.METADATA_PORT, {"type": "LIST_NODES"})
         for n in resp["nodes"]:

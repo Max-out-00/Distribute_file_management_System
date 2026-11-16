@@ -63,6 +63,8 @@ h1 { margin-bottom: 7px; font-size: 25px; letter-spacing: -.8px; }
 .button:hover { transform: translateY(-1px); }
 .button-secondary { border-color: var(--line); background: #fff; color: var(--ink-soft); }
 .button-secondary:hover { border-color: #c9d3e3; }
+.delete-button { border-color: #f0c7c7; background: #fff; color: #b42318; }
+.delete-button:hover { background: #fff5f5; }
 .button-primary { background: var(--blue); color: #fff; }
 .button-primary:hover { background: var(--blue-dark); }
 .button-small { min-height: 28px; padding: 0 9px; font-size: 10px; }
